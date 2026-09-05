@@ -40,7 +40,7 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
 
   const now = new Date();
   const grid = useMemo(() => buildMonthGrid(now.getFullYear(), now.getMonth()), [now.getFullYear(), now.getMonth()]);
-  const visibleEvents = events.filter((e) => !e.personId || !hidden.includes(e.personId));
+  const visibleEvents = events.filter((e) => e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id)));
   const days = view === 'month' ? grid : grid.filter((d) => {
     const todayIdx = grid.findIndex((g) => g.date.toDateString() === now.toDateString());
     const weekStart = Math.floor(todayIdx / 7) * 7;
@@ -48,7 +48,7 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
     return i >= weekStart && i < weekStart + 7;
   });
 
-  const personColor = (id: string | null) => family.find((m) => m.id === id)?.color ?? theme.colors.inkSoft;
+  const personColor = (ids: string[]) => family.find((m) => m.id === ids[0])?.color ?? theme.colors.inkSoft;
 
   return (
     <View>
@@ -95,7 +95,7 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
               {size !== 'sm' && (
                 <View style={styles.dotRow}>
                   {dayEvents.slice(0, 3).map((e) => (
-                    <View key={e.id} style={[styles.dot, { backgroundColor: personColor(e.personId) }]} />
+                    <View key={e.id} style={[styles.dot, { backgroundColor: personColor(e.personIds) }]} />
                   ))}
                 </View>
               )}
@@ -127,10 +127,10 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
   const family = useFamilyStore((s) => s.members);
   const today = todayIso();
   const todays = events
-    .filter((e) => e.date === today && (!e.personId || !hidden.includes(e.personId)))
+    .filter((e) => e.date === today && (e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id))))
     .sort((a, b) => (a.time ?? '').localeCompare(b.time ?? ''));
 
-  const personColor = (id: string | null) => family.find((m) => m.id === id)?.color ?? theme.colors.inkSoft;
+  const eventPeople = (ids: string[]) => family.filter((m) => ids.includes(m.id));
   const list = size === 'sm' ? todays.slice(0, 2) : todays;
 
   return (
@@ -141,17 +141,27 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
           Nothing on the calendar today.
         </Text>
       )}
-      {list.map((e) => (
-        <View key={e.id} style={[styles.eventRow, { borderBottomColor: theme.colors.border }]}>
-          <Text style={{ width: 64, fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.inkSoft }}>
-            {e.time ?? 'All day'}
-          </Text>
-          <View style={[styles.eventDot, { backgroundColor: personColor(e.personId) }]} />
-          <Text style={{ fontFamily: theme.fonts.bodySemiBold, fontSize: 14, color: theme.colors.ink, flex: 1 }}>
-            {e.title}
-          </Text>
-        </View>
-      ))}
+      {list.map((e) => {
+        const people = eventPeople(e.personIds);
+        return (
+          <View key={e.id} style={[styles.eventRow, { borderBottomColor: theme.colors.border }]}>
+            <Text style={{ width: 64, fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.inkSoft }}>
+              {e.time ?? 'All day'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 2 }}>
+              {(people.length ? people : [null]).slice(0, 3).map((p, i) => (
+                <View
+                  key={p?.id ?? i}
+                  style={[styles.eventDot, { backgroundColor: p?.color ?? theme.colors.inkSoft }]}
+                />
+              ))}
+            </View>
+            <Text style={{ fontFamily: theme.fonts.bodySemiBold, fontSize: 14, color: theme.colors.ink, flex: 1 }}>
+              {e.title}
+            </Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -163,7 +173,7 @@ export function MealWidgetContent({ size }: { size: WidgetSize }) {
   const family = useFamilyStore((s) => s.members);
   const today = dayOfWeek();
   const dinner = meals.find((m) => m.day === today && m.slot === 'dinner');
-  const chef = family.find((f) => f.id === dinner?.chefId);
+  const chefs = dinner ? family.filter((f) => dinner.chefIds.includes(f.id)) : [];
 
   const order: (typeof today)[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   const todayIdx = order.indexOf(today);
@@ -179,9 +189,9 @@ export function MealWidgetContent({ size }: { size: WidgetSize }) {
         <Text style={{ fontFamily: theme.fonts.head, fontSize: 15, color: theme.colors.ink, marginBottom: 3 }}>
           {dinner?.name ?? 'No dinner planned yet'}
         </Text>
-        {chef && (
+        {chefs.length > 0 && (
           <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 11, color: theme.colors.inkSoft, marginBottom: 8 }}>
-            Chef: {chef.name} • Dinner
+            Chef{chefs.length > 1 ? 's' : ''}: {chefs.map((c) => c.name).join(', ')} • Dinner
           </Text>
         )}
         {!!dinner?.rating && (

@@ -1,4 +1,4 @@
--- Roost — Supabase schema
+-- FamilyPortal — Supabase schema
 --
 -- Run this once in your Supabase project's SQL Editor (Supabase dashboard →
 -- SQL Editor → New query → paste this whole file → Run). See README.md →
@@ -14,6 +14,14 @@
 -- indexed, but don't treat this as a substitute for real auth if that
 -- matters to you later (Supabase Auth + per-row `owner` policies is the
 -- upgrade path).
+--
+-- If you already ran an earlier version of this file (meals.chef_id /
+-- calendar_events.person_id as single text columns), do NOT just re-run
+-- this file — `create table if not exists` won't alter an existing table's
+-- columns, so your existing tables would keep the old single-person
+-- columns and the app (which now expects chef_ids/person_ids arrays) would
+-- see them as empty. Run `supabase/migrate_multi_person.sql` once instead —
+-- it converts your existing data in place and is safe to run exactly once.
 
 -- ---------------------------------------------------------------------------
 -- Tables
@@ -36,13 +44,13 @@ create table if not exists chores (
 );
 
 create table if not exists meals (
-  id       text primary key,
-  day      text not null,       -- 'mon'..'sun'
-  slot     text not null,       -- 'breakfast' | 'lunch' | 'dinner'
-  name     text not null,
-  chef_id  text references family_members(id) on delete set null,
-  notes    text,
-  rating   integer               -- 0-5, nullable
+  id        text primary key,
+  day       text not null,       -- 'mon'..'sun'
+  slot      text not null,       -- 'breakfast' | 'lunch' | 'dinner'
+  name      text not null,
+  chef_ids  text[] not null default '{}',  -- zero or more family_members.id — no FK on array columns, so referential integrity here is enforced by the app, not the database
+  notes     text,
+  rating    integer               -- 0-5, nullable
 );
 
 create table if not exists board_columns (
@@ -61,12 +69,12 @@ create table if not exists board_items (
 );
 
 create table if not exists calendar_events (
-  id         text primary key,
-  date       text not null,      -- ISO date "YYYY-MM-DD"
-  time       text,                -- e.g. "9:00 AM", nullable = all-day
-  title      text not null,
-  person_id  text references family_members(id) on delete set null,
-  source     text not null default 'local'  -- 'local' | 'google' | 'apple'
+  id          text primary key,
+  date        text not null,      -- ISO date "YYYY-MM-DD"
+  time        text,                -- e.g. "9:00 AM", nullable = all-day
+  title       text not null,
+  person_ids  text[] not null default '{}',  -- zero or more family_members.id — see note on meals.chef_ids above
+  source      text not null default 'local'  -- 'local' | 'google' | 'apple'
 );
 
 -- ---------------------------------------------------------------------------
@@ -135,19 +143,19 @@ insert into chores (id, title, assignee_id, points, done) values
   ('c9', 'Pay bills',            'dad',  0, false)
 on conflict (id) do nothing;
 
-insert into meals (id, day, slot, name, chef_id, rating, notes) values
-  ('m1',  'mon', 'lunch',  'Leftovers',              'dad',  null, null),
-  ('m2',  'tue', 'lunch',  'Grilled Cheese',          'milo', null, null),
-  ('m3',  'thu', 'lunch',  'Turkey Sandwiches',       'mom',  null, null),
-  ('m4',  'fri', 'lunch',  'Pizza Slices',            'dad',  null, null),
-  ('m5',  'sun', 'lunch',  'Pancake Brunch',          'mom',  null, null),
-  ('m6',  'mon', 'dinner', 'Taco Night',              'kaya', null, null),
-  ('m7',  'tue', 'dinner', 'BBQ Chicken',             'dad',  null, null),
-  ('m8',  'wed', 'dinner', 'Homemade Pizza',          'milo', null, null),
-  ('m9',  'thu', 'dinner', 'Veggie Stir-fry',         'mom',  null, null),
-  ('m10', 'fri', 'dinner', 'Grilled Salmon',          'dad',  null, null),
-  ('m11', 'sat', 'dinner', 'Roast & Veggies',         'mom',  null, null),
-  ('m12', 'sun', 'dinner', 'Spaghetti & Meatballs',   'mom',  4,    'Double the recipe — Milo''s friend is staying over for dinner.')
+insert into meals (id, day, slot, name, chef_ids, rating, notes) values
+  ('m1',  'mon', 'lunch',  'Leftovers',              array['dad'],         null, null),
+  ('m2',  'tue', 'lunch',  'Grilled Cheese',          array['milo'],       null, null),
+  ('m3',  'thu', 'lunch',  'Turkey Sandwiches',       array['mom'],        null, null),
+  ('m4',  'fri', 'lunch',  'Pizza Slices',            array['dad'],        null, null),
+  ('m5',  'sun', 'lunch',  'Pancake Brunch',          array['mom'],        null, null),
+  ('m6',  'mon', 'dinner', 'Taco Night',              array['kaya'],       null, null),
+  ('m7',  'tue', 'dinner', 'BBQ Chicken',             array['dad'],        null, null),
+  ('m8',  'wed', 'dinner', 'Homemade Pizza',          array['milo'],       null, null),
+  ('m9',  'thu', 'dinner', 'Veggie Stir-fry',         array['mom'],        null, null),
+  ('m10', 'fri', 'dinner', 'Grilled Salmon',          array['dad'],        null, null),
+  ('m11', 'sat', 'dinner', 'Roast & Veggies',         array['mom'],        null, null),
+  ('m12', 'sun', 'dinner', 'Spaghetti & Meatballs',   array['mom','dad'],  4,    'Double the recipe — Milo''s friend is staying over for dinner.')
 on conflict (id) do nothing;
 
 insert into board_columns (id, title, color) values
@@ -171,12 +179,12 @@ on conflict (id) do nothing;
 -- this script* rather than the app's original relative-to-launch-day seed
 -- data (that logic lived in client code) — feel free to delete/edit these
 -- from the Calendar screen once you've run the schema.
-insert into calendar_events (id, date, time, title, person_id, source) values
-  ('e1', (current_date - (extract(day from current_date)::int - 5))::text,  null,      'Beach day',            'dad',  'local'),
-  ('e2', (current_date - (extract(day from current_date)::int - 15))::text, null,      'Business trip',        'dad',  'local'),
-  ('e3', current_date::text,                                                '9:00 AM', 'Soccer practice',      'milo', 'local'),
-  ('e4', current_date::text,                                                '3:30 PM', 'Dentist appointment',  'kaya', 'local'),
-  ('e5', current_date::text,                                                '6:00 PM', 'Family dinner',        'dad',  'local'),
-  ('e6', (current_date + 1)::text,                                          null,      'Book club',            'mom',  'local'),
-  ('e7', (current_date + 3)::text,                                          null,      'Piano lesson',         'kaya', 'local')
+insert into calendar_events (id, date, time, title, person_ids, source) values
+  ('e1', (current_date - (extract(day from current_date)::int - 5))::text,  null,      'Beach day',            array['dad'],                       'local'),
+  ('e2', (current_date - (extract(day from current_date)::int - 15))::text, null,      'Business trip',        array['dad'],                       'local'),
+  ('e3', current_date::text,                                                '9:00 AM', 'Soccer practice',      array['milo'],                      'local'),
+  ('e4', current_date::text,                                                '3:30 PM', 'Dentist appointment',  array['kaya'],                      'local'),
+  ('e5', current_date::text,                                                '6:00 PM', 'Family dinner',        array['dad','mom','milo','kaya'],   'local'),
+  ('e6', (current_date + 1)::text,                                          null,      'Book club',            array['mom'],                       'local'),
+  ('e7', (current_date + 3)::text,                                          null,      'Piano lesson',         array['kaya'],                      'local')
 on conflict (id) do nothing;

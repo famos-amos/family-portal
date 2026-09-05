@@ -74,7 +74,7 @@ export function MealPlansScreen() {
               </Text>
               {WEEKDAY_LABELS.map(({ key }) => {
                 const meal = mealFor(key, slot);
-                const chef = family.find((f) => f.id === meal?.chefId);
+                const chefs = meal ? family.filter((f) => meal.chefIds.includes(f.id)) : [];
                 const isToday = key === today;
                 return (
                   <Pressable
@@ -95,11 +95,15 @@ export function MealPlansScreen() {
                         <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.ink, marginBottom: 'auto' }}>
                           {meal.name}
                         </Text>
-                        {chef && (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: chef.color }} />
+                        {chefs.length > 0 && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                            <View style={{ flexDirection: 'row', gap: 2 }}>
+                              {chefs.map((c) => (
+                                <View key={c.id} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: c.color }} />
+                              ))}
+                            </View>
                             <Text style={{ fontSize: 10.5, fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }}>
-                              {chef.name}
+                              {chefs.map((c) => c.name).join(', ')}
                             </Text>
                           </View>
                         )}
@@ -162,13 +166,13 @@ function EditMealModal({
 }: {
   editing: { day: DayOfWeek; slot: MealSlotType; meal?: Meal } | null;
   onClose: () => void;
-  onSave: (patch: { name: string; chefId: string | null; notes?: string; slot: MealSlotType; rating?: number }) => void;
+  onSave: (patch: { name: string; chefIds: string[]; notes?: string; slot: MealSlotType; rating?: number }) => void;
   onDelete: (() => void) | undefined;
 }) {
   const theme = useTheme();
   const family = useFamilyStore((s) => s.members);
   const [name, setName] = useState('');
-  const [chefId, setChefId] = useState<string | null>(null);
+  const [chefIds, setChefIds] = useState<string[]>([]);
   const [slot, setSlot] = useState<MealSlotType>('dinner');
   const [notes, setNotes] = useState('');
   const [rating, setRating] = useState(0);
@@ -176,7 +180,7 @@ function EditMealModal({
   React.useEffect(() => {
     if (editing) {
       setName(editing.meal?.name ?? '');
-      setChefId(editing.meal?.chefId ?? null);
+      setChefIds(editing.meal?.chefIds ?? []);
       setSlot(editing.slot);
       setNotes(editing.meal?.notes ?? '');
       setRating(editing.meal?.rating ?? 0);
@@ -202,19 +206,24 @@ function EditMealModal({
             style={[styles.input, { backgroundColor: theme.colors.fieldBg, color: theme.colors.ink }]}
           />
 
-          <Text style={[styles.label, { color: theme.colors.inkSoft }]}>Chef</Text>
+          <Text style={[styles.label, { color: theme.colors.inkSoft }]}>Chef(s) — tap to select any number</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-            {family.map((m) => (
-              <Pressable
-                key={m.id}
-                onPress={() => setChefId(chefId === m.id ? null : m.id)}
-                style={[styles.personChip, { backgroundColor: chefId === m.id ? m.color : theme.colors.fieldBg }]}
-              >
-                <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: chefId === m.id ? '#fff' : theme.colors.ink }}>
-                  {m.name}
-                </Text>
-              </Pressable>
-            ))}
+            {family.map((m) => {
+              const active = chefIds.includes(m.id);
+              return (
+                <Pressable
+                  key={m.id}
+                  onPress={() =>
+                    setChefIds((prev) => (prev.includes(m.id) ? prev.filter((id) => id !== m.id) : [...prev, m.id]))
+                  }
+                  style={[styles.personChip, { backgroundColor: active ? m.color : theme.colors.fieldBg }]}
+                >
+                  <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: active ? '#fff' : theme.colors.ink }}>
+                    {m.name}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
 
           <Text style={[styles.label, { color: theme.colors.inkSoft }]}>Tag for</Text>
@@ -256,7 +265,7 @@ function EditMealModal({
             </Pressable>
             <Pressable
               disabled={!name.trim()}
-              onPress={() => onSave({ name: name.trim(), chefId, notes: notes.trim() || undefined, slot, rating: rating || undefined })}
+              onPress={() => onSave({ name: name.trim(), chefIds, notes: notes.trim() || undefined, slot, rating: rating || undefined })}
               style={[styles.modalBtn, { backgroundColor: theme.colors.mealDk, opacity: name.trim() ? 1 : 0.4 }]}
             >
               <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>Save</Text>

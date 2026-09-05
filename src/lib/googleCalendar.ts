@@ -102,7 +102,7 @@ export async function fetchGoogleEvents(accessToken: string, daysAhead = 60): Pr
         ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
         : undefined,
       title: e.summary ?? '(untitled event)',
-      personId: null,
+      personIds: [],
       source: 'google' as const,
     };
   });

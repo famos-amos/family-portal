@@ -23,23 +23,23 @@ export const seedChores: Chore[] = [
 ];
 
 export const seedMeals: Meal[] = [
-  { id: 'm1', day: 'mon', slot: 'lunch', name: 'Leftovers', chefId: 'dad' },
-  { id: 'm2', day: 'tue', slot: 'lunch', name: 'Grilled Cheese', chefId: 'milo' },
-  { id: 'm3', day: 'thu', slot: 'lunch', name: 'Turkey Sandwiches', chefId: 'mom' },
-  { id: 'm4', day: 'fri', slot: 'lunch', name: 'Pizza Slices', chefId: 'dad' },
-  { id: 'm5', day: 'sun', slot: 'lunch', name: 'Pancake Brunch', chefId: 'mom' },
-  { id: 'm6', day: 'mon', slot: 'dinner', name: 'Taco Night', chefId: 'kaya' },
-  { id: 'm7', day: 'tue', slot: 'dinner', name: 'BBQ Chicken', chefId: 'dad' },
-  { id: 'm8', day: 'wed', slot: 'dinner', name: 'Homemade Pizza', chefId: 'milo' },
-  { id: 'm9', day: 'thu', slot: 'dinner', name: 'Veggie Stir-fry', chefId: 'mom' },
-  { id: 'm10', day: 'fri', slot: 'dinner', name: 'Grilled Salmon', chefId: 'dad' },
-  { id: 'm11', day: 'sat', slot: 'dinner', name: 'Roast & Veggies', chefId: 'mom' },
+  { id: 'm1', day: 'mon', slot: 'lunch', name: 'Leftovers', chefIds: ['dad'] },
+  { id: 'm2', day: 'tue', slot: 'lunch', name: 'Grilled Cheese', chefIds: ['milo'] },
+  { id: 'm3', day: 'thu', slot: 'lunch', name: 'Turkey Sandwiches', chefIds: ['mom'] },
+  { id: 'm4', day: 'fri', slot: 'lunch', name: 'Pizza Slices', chefIds: ['dad'] },
+  { id: 'm5', day: 'sun', slot: 'lunch', name: 'Pancake Brunch', chefIds: ['mom'] },
+  { id: 'm6', day: 'mon', slot: 'dinner', name: 'Taco Night', chefIds: ['kaya'] },
+  { id: 'm7', day: 'tue', slot: 'dinner', name: 'BBQ Chicken', chefIds: ['dad'] },
+  { id: 'm8', day: 'wed', slot: 'dinner', name: 'Homemade Pizza', chefIds: ['milo'] },
+  { id: 'm9', day: 'thu', slot: 'dinner', name: 'Veggie Stir-fry', chefIds: ['mom'] },
+  { id: 'm10', day: 'fri', slot: 'dinner', name: 'Grilled Salmon', chefIds: ['dad'] },
+  { id: 'm11', day: 'sat', slot: 'dinner', name: 'Roast & Veggies', chefIds: ['mom'] },
   {
     id: 'm12',
     day: 'sun',
     slot: 'dinner',
     name: 'Spaghetti & Meatballs',
-    chefId: 'mom',
+    chefIds: ['mom', 'dad'],
     rating: 4,
     notes: "Double the recipe — Milo's friend is staying over for dinner.",
   },
@@ -92,19 +92,19 @@ function isoDateInCurrentMonth(day: number): string {
 }
 
 export const seedEvents: CalendarEvent[] = [
-  { id: 'e1', date: isoDateInCurrentMonth(5), title: 'Beach day', personId: 'dad', source: 'local' },
-  { id: 'e2', date: isoDateInCurrentMonth(15), title: 'Business trip', personId: 'dad', source: 'local' },
-  { id: 'e3', date: isoDateInCurrentMonth(new Date().getDate()), time: '9:00 AM', title: 'Soccer practice', personId: 'milo', source: 'local' },
-  { id: 'e4', date: isoDateInCurrentMonth(new Date().getDate()), time: '3:30 PM', title: 'Dentist appointment', personId: 'kaya', source: 'local' },
-  { id: 'e5', date: isoDateInCurrentMonth(new Date().getDate()), time: '6:00 PM', title: 'Family dinner', personId: 'dad', source: 'local' },
-  { id: 'e6', date: isoDateInCurrentMonth(new Date().getDate() + 1), title: 'Book club', personId: 'mom', source: 'local' },
-  { id: 'e7', date: isoDateInCurrentMonth(Math.min(new Date().getDate() + 3, 28)), title: 'Piano lesson', personId: 'kaya', source: 'local' },
+  { id: 'e1', date: isoDateInCurrentMonth(5), title: 'Beach day', personIds: ['dad'], source: 'local' },
+  { id: 'e2', date: isoDateInCurrentMonth(15), title: 'Business trip', personIds: ['dad'], source: 'local' },
+  { id: 'e3', date: isoDateInCurrentMonth(new Date().getDate()), time: '9:00 AM', title: 'Soccer practice', personIds: ['milo'], source: 'local' },
+  { id: 'e4', date: isoDateInCurrentMonth(new Date().getDate()), time: '3:30 PM', title: 'Dentist appointment', personIds: ['kaya'], source: 'local' },
+  { id: 'e5', date: isoDateInCurrentMonth(new Date().getDate()), time: '6:00 PM', title: 'Family dinner', personIds: ['dad', 'mom', 'milo', 'kaya'], source: 'local' },
+  { id: 'e6', date: isoDateInCurrentMonth(new Date().getDate() + 1), title: 'Book club', personIds: ['mom'], source: 'local' },
+  { id: 'e7', date: isoDateInCurrentMonth(Math.min(new Date().getDate() + 3, 28)), title: 'Piano lesson', personIds: ['kaya'], source: 'local' },
 ];
 
 export const dailyChallenges = [
   { question: 'Would you rather explore outer space or the deep ocean?', tag: 'Would You Rather', optionA: 'Space', optionB: 'Ocean' },
   { question: 'Would you rather have the power of invisibility or flight?', tag: 'Would You Rather', optionA: 'Invisibility', optionB: 'Flight' },
-  { question: 'What is one thing you’re grateful for today?', tag: 'Question', optionA: undefined, optionB: undefined },
+  { question: 'What is one thing you're grateful for today?', tag: 'Question', optionA: undefined, optionB: undefined },
 ];
 
 export const verses = [

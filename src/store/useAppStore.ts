@@ -360,7 +360,7 @@ function mealFromRow(row: any): Meal {
     day: row.day,
     slot: row.slot,
     name: row.name,
-    chefId: row.chef_id,
+    chefIds: row.chef_ids ?? [],
     notes: row.notes ?? undefined,
     rating: row.rating ?? undefined,
   };
@@ -370,7 +370,7 @@ function mealToRow(id: string, m: Partial<Omit<Meal, 'id'>>) {
   if (m.day !== undefined) row.day = m.day;
   if (m.slot !== undefined) row.slot = m.slot;
   if (m.name !== undefined) row.name = m.name;
-  if (m.chefId !== undefined) row.chef_id = m.chefId;
+  if (m.chefIds !== undefined) row.chef_ids = m.chefIds;
   if (m.notes !== undefined) row.notes = m.notes ?? null;
   if (m.rating !== undefined) row.rating = m.rating ?? null;
   return row;
@@ -549,7 +549,7 @@ function eventFromRow(row: any): CalendarEvent {
     date: row.date,
     time: row.time ?? undefined,
     title: row.title,
-    personId: row.person_id,
+    personIds: row.person_ids ?? [],
     source: row.source,
   };
 }
@@ -558,7 +558,7 @@ function eventToRow(id: string, e: Partial<Omit<CalendarEvent, 'id'>>) {
   if (e.date !== undefined) row.date = e.date;
   if (e.time !== undefined) row.time = e.time ?? null;
   if (e.title !== undefined) row.title = e.title;
-  if (e.personId !== undefined) row.person_id = e.personId;
+  if (e.personIds !== undefined) row.person_ids = e.personIds;
   if (e.source !== undefined) row.source = e.source;
   return row;
 }

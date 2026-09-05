@@ -199,7 +199,7 @@ function parseIcsEventsFromMultistatus(xml: string): CalendarEvent[] {
       id: `apple_${i}_${dtstart}`,
       date,
       title: summary,
-      personId: null,
+      personIds: [],
       source: 'apple' as const,
     };
   });

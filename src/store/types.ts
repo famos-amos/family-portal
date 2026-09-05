@@ -25,7 +25,8 @@ export type Meal = {
   day: DayOfWeek;
   slot: MealSlotType;
   name: string;
-  chefId: string | null;
+  /** Zero or more family members cooking/responsible for this meal. */
+  chefIds: string[];
   notes?: string;
   /** 0-5 stars, only really meaningful once the meal's been cooked & rated. */
   rating?: number;
@@ -54,7 +55,8 @@ export type CalendarEvent = {
   date: string;
   time?: string;
   title: string;
-  personId: string | null;
+  /** Zero or more family members this event involves. */
+  personIds: string[];
   source: CalendarEventSource;
 };
 

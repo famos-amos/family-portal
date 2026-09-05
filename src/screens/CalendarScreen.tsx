@@ -32,7 +32,7 @@ export function CalendarScreen() {
     [cursor.getFullYear(), cursor.getMonth()],
   );
 
-  const visibleEvents = events.filter((e) => !e.personId || !hidden.includes(e.personId));
+  const visibleEvents = events.filter((e) => e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id)));
 
   const today = todayIso();
   const todayIdx = grid.findIndex((g) => g.date.toISOString().slice(0, 10) === today);
@@ -153,7 +153,8 @@ export function CalendarScreen() {
                     {date.getDate()}
                   </Text>
                   {dayEvents.slice(0, view === 'day' ? 20 : 3).map((e) => {
-                    const person = family.find((m) => m.id === e.personId);
+                    const people = family.filter((m) => e.personIds.includes(m.id));
+                    const chipColor = people[0]?.color ?? theme.colors.inkSoft;
                     return (
                       <Pressable
                         key={e.id}
@@ -163,18 +164,21 @@ export function CalendarScreen() {
                         // for React Native's touch responder to award the tap
                         // to whichever one was actually touched.
                         onPress={() => setEditing(e)}
-                        style={[
-                          styles.chip,
-                          { backgroundColor: (person?.color ?? theme.colors.inkSoft) + '30' },
-                        ]}
+                        style={[styles.chip, { backgroundColor: chipColor + '30' }]}
                       >
-                        <Text
-                          numberOfLines={1}
-                          style={{ fontSize: 9.5, fontFamily: theme.fonts.bodyBold, color: person?.color ?? theme.colors.ink }}
-                        >
-                          {e.time ? `${e.time} ` : ''}
-                          {e.title}
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1 }}>
+                          {people.length > 1 &&
+                            people.slice(0, 4).map((p) => (
+                              <View key={p.id} style={[styles.chipDot, { backgroundColor: p.color }]} />
+                            ))}
+                          <Text
+                            numberOfLines={1}
+                            style={{ fontSize: 9.5, fontFamily: theme.fonts.bodyBold, color: people[0]?.color ?? theme.colors.ink, flexShrink: 1 }}
+                          >
+                            {e.time ? `${e.time} ` : ''}
+                            {e.title}
+                          </Text>
+                        </View>
                       </Pressable>
                     );
                   })}
@@ -197,7 +201,7 @@ export function CalendarScreen() {
         initial={undefined}
         onClose={() => setAddOpen(false)}
         onSave={(patch) => {
-          addEvent({ date: selectedDate, title: patch.title, time: patch.time || undefined, personId: patch.personId });
+          addEvent({ date: selectedDate, title: patch.title, time: patch.time || undefined, personIds: patch.personIds });
           setAddOpen(false);
         }}
         onDelete={undefined}
@@ -211,7 +215,7 @@ export function CalendarScreen() {
         onClose={() => setEditing(null)}
         onSave={(patch) => {
           if (!editing) return;
-          updateEvent(editing.id, { title: patch.title, time: patch.time || undefined, personId: patch.personId });
+          updateEvent(editing.id, { title: patch.title, time: patch.time || undefined, personIds: patch.personIds });
           setEditing(null);
         }}
         onDelete={() => {
@@ -240,20 +244,20 @@ function EventFormModal({
   date: string;
   initial: CalendarEvent | undefined;
   onClose: () => void;
-  onSave: (patch: { title: string; time: string; personId: string | null }) => void;
+  onSave: (patch: { title: string; time: string; personIds: string[] }) => void;
   onDelete: (() => void) | undefined;
 }) {
   const theme = useTheme();
   const family = useFamilyStore((s) => s.members);
   const [title, setTitle] = useState('');
   const [time, setTime] = useState('');
-  const [personId, setPersonId] = useState<string | null>(null);
+  const [personIds, setPersonIds] = useState<string[]>([]);
 
   React.useEffect(() => {
     if (visible) {
       setTitle(initial?.title ?? '');
       setTime(initial?.time ?? '');
-      setPersonId(initial?.personId ?? null);
+      setPersonIds(initial?.personIds ?? []);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -286,13 +290,18 @@ function EventFormModal({
             style={[styles.input, { backgroundColor: theme.colors.fieldBg, color: theme.colors.ink }]}
           />
 
+          <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 10.5, color: theme.colors.inkSoft, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Who's involved (tap to select any number)
+          </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
             {family.map((m) => {
-              const active = personId === m.id;
+              const active = personIds.includes(m.id);
               return (
                 <Pressable
                   key={m.id}
-                  onPress={() => setPersonId(active ? null : m.id)}
+                  onPress={() =>
+                    setPersonIds((prev) => (prev.includes(m.id) ? prev.filter((id) => id !== m.id) : [...prev, m.id]))
+                  }
                   style={[
                     styles.personChip,
                     { backgroundColor: active ? m.color : theme.colors.fieldBg },
@@ -317,7 +326,7 @@ function EventFormModal({
             </Pressable>
             <Pressable
               disabled={!title.trim()}
-              onPress={() => onSave({ title: title.trim(), time: time.trim(), personId })}
+              onPress={() => onSave({ title: title.trim(), time: time.trim(), personIds })}
               style={[styles.modalBtn, { backgroundColor: theme.colors.ink, opacity: title.trim() ? 1 : 0.4 }]}
             >
               <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>Save</Text>
@@ -349,6 +358,7 @@ const styles = StyleSheet.create({
   monthGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   dayCell: { width: `${100 / 7}%`, aspectRatio: 1, borderRadius: 10, padding: 5, marginBottom: 0 },
   chip: { borderRadius: 6, paddingHorizontal: 4, paddingVertical: 2, marginTop: 2 },
+  chipDot: { width: 5, height: 5, borderRadius: 2.5 },
   modalBackdrop: { flex: 1, backgroundColor: '#00000050', alignItems: 'center', justifyContent: 'center' },
   modalCard: { width: 420, borderRadius: 24, padding: 22 },
   input: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10, fontSize: 14 },
