@@ -94,9 +94,9 @@ function isoDateInCurrentMonth(day: number): string {
 export const seedEvents: CalendarEvent[] = [
   { id: 'e1', date: isoDateInCurrentMonth(5), title: 'Beach day', personIds: ['dad'], source: 'local' },
   { id: 'e2', date: isoDateInCurrentMonth(15), title: 'Business trip', personIds: ['dad'], source: 'local' },
-  { id: 'e3', date: isoDateInCurrentMonth(new Date().getDate()), time: '9:00 AM', title: 'Soccer practice', personIds: ['milo'], source: 'local' },
+  { id: 'e3', date: isoDateInCurrentMonth(new Date().getDate()), time: '9:00 AM', endTime: '10:30 AM', title: 'Soccer practice', personIds: ['milo'], source: 'local' },
   { id: 'e4', date: isoDateInCurrentMonth(new Date().getDate()), time: '3:30 PM', title: 'Dentist appointment', personIds: ['kaya'], source: 'local' },
-  { id: 'e5', date: isoDateInCurrentMonth(new Date().getDate()), time: '6:00 PM', title: 'Family dinner', personIds: ['dad', 'mom', 'milo', 'kaya'], source: 'local' },
+  { id: 'e5', date: isoDateInCurrentMonth(new Date().getDate()), time: '6:00 PM', endTime: '7:30 PM', title: 'Family dinner', personIds: ['dad', 'mom', 'milo', 'kaya'], source: 'local' },
   { id: 'e6', date: isoDateInCurrentMonth(new Date().getDate() + 1), title: 'Book club', personIds: ['mom'], source: 'local' },
   { id: 'e7', date: isoDateInCurrentMonth(Math.min(new Date().getDate() + 3, 28)), title: 'Piano lesson', personIds: ['kaya'], source: 'local' },
 ];
@@ -104,7 +104,21 @@ export const seedEvents: CalendarEvent[] = [
 export const dailyChallenges = [
   { question: 'Would you rather explore outer space or the deep ocean?', tag: 'Would You Rather', optionA: 'Space', optionB: 'Ocean' },
   { question: 'Would you rather have the power of invisibility or flight?', tag: 'Would You Rather', optionA: 'Invisibility', optionB: 'Flight' },
-  { question: 'What is one thing you're grateful for today?', tag: 'Question', optionA: undefined, optionB: undefined },
+  { question: 'What is one thing you’re grateful for today?', tag: 'Question', optionA: undefined, optionB: undefined },
+  { question: 'Would you rather always have to sing instead of speak, or dance everywhere you walk?', tag: 'Would You Rather', optionA: 'Sing', optionB: 'Dance' },
+  { question: 'Would you rather be the best player on a losing team or the worst player on a winning team?', tag: 'Would You Rather', optionA: 'Best on losing team', optionB: 'Worst on winning team' },
+  { question: 'Would you rather have a pet dragon or a pet unicorn?', tag: 'Would You Rather', optionA: 'Dragon', optionB: 'Unicorn' },
+  { question: 'Would you rather live in a treehouse or a houseboat?', tag: 'Would You Rather', optionA: 'Treehouse', optionB: 'Houseboat' },
+  { question: 'Would you rather never use social media again or never watch another movie/show?', tag: 'Would You Rather', optionA: 'No social media', optionB: 'No movies/shows' },
+  { question: 'Would you rather be able to talk to animals or speak every human language?', tag: 'Would You Rather', optionA: 'Talk to animals', optionB: 'Speak every language' },
+  { question: 'Would you rather have unlimited pizza for a year or unlimited ice cream for a year?', tag: 'Would You Rather', optionA: 'Pizza', optionB: 'Ice cream' },
+  { question: 'Would you rather be able to fly or be invisible?', tag: 'Would You Rather', optionA: 'Fly', optionB: 'Invisible' },
+  { question: 'Would you rather always be 10 minutes late or always be 20 minutes early?', tag: 'Would You Rather', optionA: '10 min late', optionB: '20 min early' },
+  { question: "What's the best thing that happened to you this week?", tag: 'Question', optionA: undefined, optionB: undefined },
+  { question: 'If you could have dinner with anyone, living or from history, who would it be?', tag: 'Question', optionA: undefined, optionB: undefined },
+  { question: 'What is a small thing that made you smile recently?', tag: 'Question', optionA: undefined, optionB: undefined },
+  { question: 'If you could instantly master one skill, what would you pick?', tag: 'Question', optionA: undefined, optionB: undefined },
+  { question: "What's your favorite family memory from this year so far?", tag: 'Question', optionA: undefined, optionB: undefined },
 ];
 
 export const verses = [

@@ -3,6 +3,8 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { makeId } from '../lib/id';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { todayIso } from '../lib/date';
+import { fetchVerseOfDay } from '../lib/verseFeed';
 import {
   seedBoardColumns,
   seedBoardItems,
@@ -445,6 +447,8 @@ function itemFromRow(row: any): BoardItem {
     description: row.description ?? undefined,
     ownerId: row.owner_id,
     done: row.done,
+    doneAt: row.done_at ?? null,
+    autoDelete: row.auto_delete ?? null,
   };
 }
 function itemToRow(id: string, i: Partial<Omit<BoardItem, 'id'>>) {
@@ -454,7 +458,48 @@ function itemToRow(id: string, i: Partial<Omit<BoardItem, 'id'>>) {
   if (i.description !== undefined) row.description = i.description ?? null;
   if (i.ownerId !== undefined) row.owner_id = i.ownerId ?? null;
   if (i.done !== undefined) row.done = i.done;
+  if (i.doneAt !== undefined) row.done_at = i.doneAt ?? null;
+  if (i.autoDelete !== undefined) row.auto_delete = i.autoDelete ?? null;
   return row;
+}
+
+// How long a checked-off board/list item is kept before the auto-delete
+// sweep (below) removes it — everything except 'immediately', which instead
+// skips `done` entirely and deletes the item the moment it's checked (see
+// `toggleItem`).
+const AUTO_DELETE_MS: Record<'72h' | 'month' | 'year', number> = {
+  '72h': 72 * 60 * 60 * 1000,
+  month: 30 * 24 * 60 * 60 * 1000,
+  year: 365 * 24 * 60 * 60 * 1000,
+};
+
+function sweepAutoDeleteBoardItems() {
+  const { items, removeItem } = useBoardsStore.getState();
+  const now = Date.now();
+  for (const item of items) {
+    if (!item.done || !item.doneAt) continue;
+    if (!item.autoDelete || item.autoDelete === 'immediately') continue;
+    const elapsed = now - new Date(item.doneAt).getTime();
+    if (elapsed >= AUTO_DELETE_MS[item.autoDelete]) {
+      removeItem(item.id);
+    }
+  }
+}
+
+let autoDeleteSweepStarted = false;
+/** Starts the recurring check for board items whose "delete automatically
+ * after..." timer has elapsed (set in the Boards screen's add/edit item
+ * popup). This is a plain client-side interval rather than a server-side
+ * cron job — there's no backend compute in this app's Supabase project, and
+ * the app's whole reason for existing is to be open on a wall-mounted
+ * tablet, so a check every few minutes while it's running is plenty timely.
+ * Safe to call more than once; only the first call actually starts the
+ * interval. Called once from hydrateAllStores(). */
+function startAutoDeleteSweep() {
+  if (autoDeleteSweepStarted) return;
+  autoDeleteSweepStarted = true;
+  sweepAutoDeleteBoardItems();
+  setInterval(sweepAutoDeleteBoardItems, 5 * 60 * 1000);
 }
 
 type BoardsState = {
@@ -464,7 +509,7 @@ type BoardsState = {
   hydrate: () => Promise<void>;
   addColumn: (c: Omit<BoardColumn, 'id'>) => void;
   removeColumn: (id: string) => void;
-  addItem: (i: Omit<BoardItem, 'id' | 'done'>) => void;
+  addItem: (i: Omit<BoardItem, 'id' | 'done' | 'doneAt'>) => void;
   updateItem: (id: string, patch: Partial<Omit<BoardItem, 'id'>>) => void;
   toggleItem: (id: string) => void;
   removeItem: (id: string) => void;
@@ -521,7 +566,7 @@ export const useBoardsStore = create<BoardsState>()((set, get) => ({
   },
   addItem: (i) => {
     const id = makeId();
-    const item: BoardItem = { ...i, id, done: false };
+    const item: BoardItem = { ...i, id, done: false, doneAt: null };
     set((s) => ({ items: [...s.items, item] }));
     syncInsert('board_items', itemToRow(id, item));
   },
@@ -530,9 +575,20 @@ export const useBoardsStore = create<BoardsState>()((set, get) => ({
     syncUpdate('board_items', id, itemToRow(id, patch));
   },
   toggleItem: (id) => {
-    const nextDone = !(get().items.find((i) => i.id === id)?.done ?? false);
-    set((s) => ({ items: s.items.map((i) => (i.id === id ? { ...i, done: nextDone } : i)) }));
-    syncUpdate('board_items', id, { done: nextDone });
+    const item = get().items.find((i) => i.id === id);
+    if (!item) return;
+    const nextDone = !item.done;
+    // "Immediately" skips the checked-off state altogether — the item
+    // disappears the instant it's checked, same as tapping Delete, rather
+    // than lingering done-and-struck-through until the next sweep.
+    if (nextDone && item.autoDelete === 'immediately') {
+      set((s) => ({ items: s.items.filter((i) => i.id !== id) }));
+      syncDelete('board_items', id);
+      return;
+    }
+    const doneAt = nextDone ? new Date().toISOString() : null;
+    set((s) => ({ items: s.items.map((i) => (i.id === id ? { ...i, done: nextDone, doneAt } : i)) }));
+    syncUpdate('board_items', id, { done: nextDone, done_at: doneAt });
   },
   removeItem: (id) => {
     set((s) => ({ items: s.items.filter((i) => i.id !== id) }));
@@ -548,6 +604,7 @@ function eventFromRow(row: any): CalendarEvent {
     id: row.id,
     date: row.date,
     time: row.time ?? undefined,
+    endTime: row.end_time ?? undefined,
     title: row.title,
     personIds: row.person_ids ?? [],
     source: row.source,
@@ -557,6 +614,7 @@ function eventToRow(id: string, e: Partial<Omit<CalendarEvent, 'id'>>) {
   const row: Record<string, unknown> = { id };
   if (e.date !== undefined) row.date = e.date;
   if (e.time !== undefined) row.time = e.time ?? null;
+  if (e.endTime !== undefined) row.end_time = e.endTime ?? null;
   if (e.title !== undefined) row.title = e.title;
   if (e.personIds !== undefined) row.person_ids = e.personIds;
   if (e.source !== undefined) row.source = e.source;
@@ -633,6 +691,52 @@ export const useCalendarStore = create<CalendarState>()((set, get) => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Verse of the Day — pulled from a real RSS feed (see src/lib/verseFeed.ts)
+// instead of the app's own small built-in rotation. Cached here (persisted,
+// so it survives a reload without refetching) keyed by the date it was
+// fetched for; VerseWidgetContent shows its own local fallback verse
+// whenever there's nothing cached for today yet (first load, or the fetch
+// failed) and swaps in the RSS text once/if it arrives.
+// ---------------------------------------------------------------------------
+type VerseState = {
+  date: string | null;
+  text: string | null;
+  reference: string | null;
+  fetching: boolean;
+  fetchIfNeeded: () => Promise<void>;
+};
+
+export const useVerseStore = create<VerseState>()(
+  persist(
+    (set, get) => ({
+      date: null,
+      text: null,
+      reference: null,
+      fetching: false,
+      fetchIfNeeded: async () => {
+        const today = todayIso();
+        const { date, fetching } = get();
+        if (date === today || fetching) return;
+        set({ fetching: true });
+        const item = await fetchVerseOfDay();
+        if (item) {
+          set({ date: today, text: item.text, reference: item.reference, fetching: false });
+        } else {
+          // Couldn't reach/parse the feed this time (offline, a CORS block
+          // in a browser preview, or a feed hiccup) — leave `date` unset so
+          // the next launch (or the next call while this one's still open)
+          // tries again, instead of getting stuck on "no answer" for the
+          // rest of the day. The widget shows its own local fallback verse
+          // in the meantime.
+          set({ fetching: false });
+        }
+      },
+    }),
+    { name: 'roost.verse', storage },
+  ),
+);
+
+// ---------------------------------------------------------------------------
 // Bootstrap — call once from App.tsx before rendering the rest of the app.
 // ---------------------------------------------------------------------------
 export async function hydrateAllStores(): Promise<void> {
@@ -643,6 +747,14 @@ export async function hydrateAllStores(): Promise<void> {
     useBoardsStore.getState().hydrate(),
     useCalendarStore.getState().hydrate(),
   ]);
+  // These two are deliberately NOT awaited above: the verse RSS fetch is a
+  // "nice to have" (VerseWidgetContent already shows a local fallback verse
+  // instantly and swaps in the RSS text if/when it arrives) and shouldn't be
+  // able to delay the wall display's boot the way a slow or CORS-blocked
+  // third-party feed could; the auto-delete sweep is a recurring background
+  // job, not something to wait on either.
+  useVerseStore.getState().fetchIfNeeded();
+  startAutoDeleteSweep();
 }
 
 // ---------------------------------------------------------------------------

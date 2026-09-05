@@ -58,8 +58,10 @@ export function HomeScreen() {
 }
 
 // The widgets whose content actually changes at different sizes (see each
-// *WidgetContent component) — everything else skips the resize control.
-const SIZED_WIDGETS = new Set<WidgetId>(['calendar', 'events', 'meal', 'todo']);
+// *WidgetContent component) — everything else skips the resize control. To
+// Do isn't in this set: instead of resizing to reveal more, it scrolls
+// internally within a fixed-size card (see TodoWidgetContent).
+const SIZED_WIDGETS = new Set<WidgetId>(['calendar', 'events', 'meal']);
 const STACKED_ORDER: WidgetId[] = ['calendar', 'events', 'meal', 'todo', 'challenge', 'verse', 'chores'];
 
 // Reproduces the design's 3-column CSS grid —
@@ -123,7 +125,7 @@ function renderWidget(id: WidgetId, size: any) {
     case 'meal':
       return <MealWidgetContent size={size} />;
     case 'todo':
-      return <TodoWidgetContent size={size} />;
+      return <TodoWidgetContent />;
     case 'challenge':
       return <ChallengeWidgetContent />;
     case 'verse':

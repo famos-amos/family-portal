@@ -54,6 +54,9 @@ export function WidgetShell({
 
 const styles = StyleSheet.create({
   card: { padding: 16, position: 'relative', flex: 1 },
-  content: { flex: 1 },
+  // minHeight: 0 matters here on web: without it, a flex:1 child that's
+  // itself trying to scroll internally (e.g. To Do's ScrollView) just grows
+  // past this card instead of being constrained to scroll within it.
+  content: { flex: 1, minHeight: 0 },
   resizeHandle: { position: 'absolute', bottom: 10, right: 10, opacity: 0.4, padding: 4 },
 });

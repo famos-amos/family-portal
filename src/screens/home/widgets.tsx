@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeProvider';
 import {
@@ -10,10 +10,11 @@ import {
   useFamilyStore,
   useMealsStore,
   useSettingsStore,
+  useVerseStore,
 } from '../../store/useAppStore';
 import { dailyChallenges, verses } from '../../data/seed';
-import { buildMonthGrid, dayOfWeek, dayOfYear, todayIso } from '../../lib/date';
-import { CalendarIcon, ChoresIcon, MealIcon, QuestionIcon, StarIcon } from '../../components/icons';
+import { addDays, buildMonthGrid, buildWeekGrid, dayOfWeek, dayOfYear, formatWeekTitle, todayIso } from '../../lib/date';
+import { CalendarIcon, ChevronLeftIcon, ChevronRightIcon, ChoresIcon, MealIcon, QuestionIcon, StarIcon } from '../../components/icons';
 import { SegmentedControl } from '../../components/ui';
 import { WidgetSize } from '../../store/types';
 
@@ -34,21 +35,26 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
   const theme = useTheme();
   const navigation = useNavigation<any>();
   const [view, setView] = useState<'week' | 'month'>('month');
+  const [cursor, setCursor] = useState(new Date());
   const events = useCalendarStore((s) => s.events);
   const hidden = useSettingsStore((s) => s.hiddenPersonIds);
   const family = useFamilyStore((s) => s.members);
 
-  const now = new Date();
-  const grid = useMemo(() => buildMonthGrid(now.getFullYear(), now.getMonth()), [now.getFullYear(), now.getMonth()]);
+  const grid = useMemo(() => buildMonthGrid(cursor.getFullYear(), cursor.getMonth()), [cursor.getFullYear(), cursor.getMonth()]);
   const visibleEvents = events.filter((e) => e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id)));
-  const days = view === 'month' ? grid : grid.filter((d) => {
-    const todayIdx = grid.findIndex((g) => g.date.toDateString() === now.toDateString());
-    const weekStart = Math.floor(todayIdx / 7) * 7;
-    const i = grid.indexOf(d);
-    return i >= weekStart && i < weekStart + 7;
-  });
+  const days = view === 'month' ? grid : buildWeekGrid(cursor);
 
   const personColor = (ids: string[]) => family.find((m) => m.id === ids[0])?.color ?? theme.colors.inkSoft;
+
+  // Prev/Next mean "a month" or "a week" depending on which sub-view is
+  // active — mirrors the same browsable-cursor pattern used on the full
+  // Calendar screen, just compacted to fit this narrow widget column.
+  const navigate = (delta: number) => {
+    setCursor(view === 'month' ? new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1) : addDays(cursor, delta * 7));
+  };
+  const titleText = view === 'month'
+    ? cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    : formatWeekTitle(cursor);
 
   return (
     <View>
@@ -62,9 +68,18 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
         ]}
       />
       <View style={styles.calTitleRow}>
-        <Text style={{ fontFamily: theme.fonts.headSemiBold, color: theme.colors.ink, fontSize: 13, marginTop: 8 }}>
-          {now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+        <Pressable onPress={() => navigate(-1)} style={styles.calNavBtn} hitSlop={6}>
+          <ChevronLeftIcon size={10} color={theme.colors.ink} />
+        </Pressable>
+        <Text
+          numberOfLines={1}
+          style={{ fontFamily: theme.fonts.headSemiBold, color: theme.colors.ink, fontSize: 12.5, marginTop: 8, flex: 1, textAlign: 'center' }}
+        >
+          {titleText}
         </Text>
+        <Pressable onPress={() => navigate(1)} style={styles.calNavBtn} hitSlop={6}>
+          <ChevronRightIcon size={10} color={theme.colors.ink} />
+        </Pressable>
       </View>
       <View style={styles.dowRow}>
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
@@ -218,37 +233,41 @@ export function MealWidgetContent({ size }: { size: WidgetSize }) {
 }
 
 // ---------------------------------------------------------------------------
-export function TodoWidgetContent({ size }: { size: WidgetSize }) {
+// Scrolls internally rather than showing only the first few items behind a
+// resize/"show more" control — the widget's card stays a fixed size and you
+// scroll the list within it.
+export function TodoWidgetContent() {
   const theme = useTheme();
   const allItems = useBoardsStore((s) => s.items);
   const toggle = useBoardsStore((s) => s.toggleItem);
   const items = allItems.filter((i) => i.columnId === 'todo');
-  const list = size === 'sm' ? items.slice(0, 3) : items;
 
   return (
-    <View>
+    <View style={{ flex: 1, minHeight: 0 }}>
       <SectionTitle icon={<ChoresIcon size={17} color={theme.colors.ink} />}>To Do</SectionTitle>
-      {list.map((item) => (
-        <Pressable key={item.id} onPress={() => toggle(item.id)} style={styles.todoRow}>
-          <View
-            style={[
-              styles.todoBox,
-              { borderColor: theme.colors.boardsDk, backgroundColor: item.done ? theme.colors.boardsDk : 'transparent' },
-            ]}
-          />
-          <Text
-            style={{
-              fontFamily: theme.fonts.bodySemiBold,
-              fontSize: 13.5,
-              color: theme.colors.ink,
-              textDecorationLine: item.done ? 'line-through' : 'none',
-              opacity: item.done ? 0.55 : 1,
-            }}
-          >
-            {item.title}
-          </Text>
-        </Pressable>
-      ))}
+      <ScrollView style={{ flex: 1, minHeight: 0 }} showsVerticalScrollIndicator={false}>
+        {items.map((item) => (
+          <Pressable key={item.id} onPress={() => toggle(item.id)} style={styles.todoRow}>
+            <View
+              style={[
+                styles.todoBox,
+                { borderColor: theme.colors.boardsDk, backgroundColor: item.done ? theme.colors.boardsDk : 'transparent' },
+              ]}
+            />
+            <Text
+              style={{
+                fontFamily: theme.fonts.bodySemiBold,
+                fontSize: 13.5,
+                color: theme.colors.ink,
+                textDecorationLine: item.done ? 'line-through' : 'none',
+                opacity: item.done ? 0.55 : 1,
+              }}
+            >
+              {item.title}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -310,20 +329,37 @@ export function ChallengeWidgetContent() {
 }
 
 // ---------------------------------------------------------------------------
+// Pulled from a real RSS feed (see src/lib/verseFeed.ts + useVerseStore) —
+// falls back instantly to the app's small local verse rotation (by
+// day-of-year, so it's still a different verse each day) while the fetch is
+// in flight, or if it fails (offline, a CORS block in a web preview, etc.).
 export function VerseWidgetContent() {
   const theme = useTheme();
+  const rssText = useVerseStore((s) => s.text);
+  const rssReference = useVerseStore((s) => s.reference);
+  const fetchIfNeeded = useVerseStore((s) => s.fetchIfNeeded);
+
+  React.useEffect(() => {
+    fetchIfNeeded();
+  }, [fetchIfNeeded]);
+
   const idx = dayOfYear() % verses.length;
-  const verse = verses[idx];
+  const fallback = verses[idx];
+  const text = rssText ?? fallback.text;
+  const reference = rssReference ?? fallback.ref;
+
   return (
     <View>
       <SectionTitle icon={<Text style={{ fontSize: 16 }}>📖</Text>}>Verse of the Day</SectionTitle>
       <Text style={{ fontFamily: theme.fonts.head, fontSize: 30, color: '#B79FD6', lineHeight: 26 }}>"</Text>
       <Text style={{ fontFamily: theme.fonts.bodySemiBold, fontStyle: 'italic', fontSize: 13, color: theme.colors.ink, lineHeight: 19 }}>
-        {verse.text}
+        {text}
       </Text>
-      <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: '#7A5AA6', marginTop: 8 }}>
-        {verse.ref}
-      </Text>
+      {!!reference && (
+        <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: '#7A5AA6', marginTop: 8 }}>
+          {reference}
+        </Text>
+      )}
     </View>
   );
 }
@@ -391,7 +427,8 @@ export function ChoresWidgetContent() {
 }
 
 const styles = StyleSheet.create({
-  calTitleRow: { marginBottom: 2 },
+  calTitleRow: { marginBottom: 2, flexDirection: 'row', alignItems: 'center' },
+  calNavBtn: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#ffffffb0', alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   dowRow: { flexDirection: 'row', marginTop: 8 },
   dow: { flex: 1, textAlign: 'center', fontSize: 10 },
   calGrid: { flexDirection: 'row', flexWrap: 'wrap' },

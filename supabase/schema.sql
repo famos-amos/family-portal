@@ -1,4 +1,4 @@
--- FamilyPortal — Supabase schema
+-- Roost — Supabase schema
 --
 -- Run this once in your Supabase project's SQL Editor (Supabase dashboard →
 -- SQL Editor → New query → paste this whole file → Run). See README.md →
@@ -22,6 +22,11 @@
 -- columns and the app (which now expects chef_ids/person_ids arrays) would
 -- see them as empty. Run `supabase/migrate_multi_person.sql` once instead —
 -- it converts your existing data in place and is safe to run exactly once.
+--
+-- Similarly, if your project predates event end times / board item
+-- auto-delete (calendar_events.end_time, board_items.done_at,
+-- board_items.auto_delete below), run `supabase/migrate_v3.sql` once — it
+-- just adds the new nullable columns, no data conversion needed.
 
 -- ---------------------------------------------------------------------------
 -- Tables
@@ -65,13 +70,16 @@ create table if not exists board_items (
   title        text not null,
   description  text,
   owner_id     text references family_members(id) on delete set null,
-  done         boolean not null default false
+  done         boolean not null default false,
+  done_at      text,       -- ISO timestamp of when this was last checked done, nullable
+  auto_delete  text        -- 'immediately' | '72h' | 'month' | 'year', nullable = never auto-delete
 );
 
 create table if not exists calendar_events (
   id          text primary key,
   date        text not null,      -- ISO date "YYYY-MM-DD"
   time        text,                -- e.g. "9:00 AM", nullable = all-day
+  end_time    text,                -- e.g. "4:30 PM", nullable = no set duration
   title       text not null,
   person_ids  text[] not null default '{}',  -- zero or more family_members.id — see note on meals.chef_ids above
   source      text not null default 'local'  -- 'local' | 'google' | 'apple'
