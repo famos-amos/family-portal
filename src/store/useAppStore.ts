@@ -55,9 +55,46 @@ const storage = createJSONStorage(() => AsyncStorage);
 // for the session — nothing is persisted anywhere. See README.md →
 // "Setting up Supabase".
 
+// ---------------------------------------------------------------------------
+// Supabase connection/sync status — NOT persisted; a live, in-memory
+// diagnostic so it's obvious *why* the app might be showing old/sample data
+// instead of having to guess from a browser console log. Rendered in
+// Settings → Database. Every `fetchTable()` call (one per table, on launch,
+// or from the "Refresh From Database" button) records whether it actually
+// reached Supabase and how many rows came back; every failed write records
+// the most recent error.
+// ---------------------------------------------------------------------------
+type TableFetchStatus = { ok: boolean; rows: number; at: string };
+
+type SyncStatusState = {
+  tables: Record<string, TableFetchStatus>;
+  lastError: { table: string; action: string; message: string; at: string } | null;
+  recordFetch: (table: string, ok: boolean, rows: number) => void;
+  recordError: (table: string, action: string, message: string) => void;
+};
+
+export const useSyncStatusStore = create<SyncStatusState>()((set) => ({
+  tables: {},
+  lastError: null,
+  recordFetch: (table, ok, rows) =>
+    set((s) => ({ tables: { ...s.tables, [table]: { ok, rows, at: new Date().toISOString() } } })),
+  recordError: (table, action, message) => set({ lastError: { table, action, message, at: new Date().toISOString() } }),
+}));
+
 function logSyncError(action: string, table: string, error: unknown) {
+  // Supabase's PostgrestError has a `.message` but isn't an `instanceof
+  // Error`, so check for a message property before falling back to a raw
+  // JSON dump — the difference between a clean one-line reason and an
+  // unreadable object blob in Settings → Database.
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'object' && error !== null && 'message' in error
+      ? String((error as { message: unknown }).message)
+      : JSON.stringify(error);
   // eslint-disable-next-line no-console
   console.error(`[supabase] ${action} on "${table}" failed —`, error);
+  useSyncStatusStore.getState().recordError(table, action, message);
 }
 
 function syncInsert(table: string, row: Record<string, unknown>) {
@@ -109,18 +146,37 @@ const FETCH_TIMEOUT_MS = 8000;
  * already has (seed data on a first launch, or last-known-good data)
  * rather than trust `rows` (always `[]` in that case). This never throws. */
 async function fetchTable(table: string): Promise<{ ok: boolean; rows: any[] }> {
-  if (!isSupabaseConfigured) return { ok: false, rows: [] };
+  if (!isSupabaseConfigured) {
+    useSyncStatusStore.getState().recordFetch(table, false, 0);
+    return { ok: false, rows: [] };
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const { data, error } = await supabase.from(table).select('*').abortSignal(controller.signal);
     if (error) {
-      logSyncError('fetch', table, error);
+      // supabase-js sometimes surfaces the abort as a normal query error
+      // object here rather than throwing — `controller.signal.aborted` is
+      // the ground truth for "this was our own timeout" either way, so both
+      // this branch and the catch below check it the same way rather than
+      // guessing from the error's shape (which differs between a thrown
+      // DOMException and a returned PostgrestError).
+      const action = controller.signal.aborted ? `fetch (timed out after ${FETCH_TIMEOUT_MS / 1000}s)` : 'fetch';
+      logSyncError(action, table, error);
+      useSyncStatusStore.getState().recordFetch(table, false, 0);
       return { ok: false, rows: [] };
     }
-    return { ok: true, rows: data ?? [] };
+    const rows = data ?? [];
+    // eslint-disable-next-line no-console
+    console.log(`[supabase] fetched "${table}": ${rows.length} row(s)`);
+    useSyncStatusStore.getState().recordFetch(table, true, rows.length);
+    return { ok: true, rows };
   } catch (err) {
-    logSyncError('fetch (timed out or network error)', table, err);
+    const action = controller.signal.aborted
+      ? `fetch (timed out after ${FETCH_TIMEOUT_MS / 1000}s)`
+      : 'fetch (network error)';
+    logSyncError(action, table, err);
+    useSyncStatusStore.getState().recordFetch(table, false, 0);
     return { ok: false, rows: [] };
   } finally {
     clearTimeout(timeout);
