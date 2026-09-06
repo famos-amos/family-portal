@@ -10,21 +10,23 @@ export function assignMealToPlan({
   name,
   day,
   slot,
-  chefId = null,
+  chefIds = [],
 }: {
   meals: Meal[];
   upsertMeal: (m: Omit<Meal, 'id'> & { id?: string }) => void;
   name: string;
   day: DayOfWeek;
   slot: MealSlotType;
-  chefId?: string | null;
+  /** Chefs to set when creating a fresh entry; ignored when an existing
+   * entry is being renamed in place (its chefs are kept). */
+  chefIds?: string[];
 }) {
   const existing = meals.find((m) => m.day === day && m.slot === slot);
   const dayLabel = day[0].toUpperCase() + day.slice(1);
   const slotLabel = slot[0].toUpperCase() + slot.slice(1);
 
   const doAssign = () => {
-    upsertMeal({ id: existing?.id, day, slot, name, chefId: existing?.chefId ?? chefId });
+    upsertMeal({ id: existing?.id, day, slot, name, chefIds: existing?.chefIds ?? chefIds });
   };
 
   if (existing && existing.name !== name) {
