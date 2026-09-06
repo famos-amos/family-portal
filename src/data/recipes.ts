@@ -1,17 +1,8 @@
 // Starter recipe library — a small curated set so Recipes and Suggestions
-// have real content on first launch. Fully editable feel isn't wired up yet
-// (no "add your own recipe" UI), but every recipe here can be sent straight
-// to the meal planner from Recipes or Suggestions.
-import { MealSlotType } from '../store/types';
-
-export type Recipe = {
-  id: string;
-  name: string;
-  slot: MealSlotType;
-  time: string;
-  ingredients: string[];
-  steps: string[];
-};
+// have real content on first launch. Every recipe here can be sent straight
+// to the meal planner from Recipes or Suggestions, and can be edited or
+// deleted like any user-added recipe once the app is backed by Supabase.
+import { Recipe } from '../store/types';
 
 export const seedRecipes: Recipe[] = [
   {
@@ -19,7 +10,14 @@ export const seedRecipes: Recipe[] = [
     name: 'Spaghetti & Meatballs',
     slot: 'dinner',
     time: '40 min',
-    ingredients: ['1 lb ground beef', 'Spaghetti', 'Marinara sauce', 'Breadcrumbs', '1 egg', 'Parmesan'],
+    ingredients: [
+      { amount: '1 lb', name: 'ground beef' },
+      { amount: '', name: 'Spaghetti' },
+      { amount: '', name: 'Marinara sauce' },
+      { amount: '', name: 'Breadcrumbs' },
+      { amount: '1', name: 'egg' },
+      { amount: '', name: 'Parmesan' },
+    ],
     steps: [
       'Mix ground beef, breadcrumbs, egg, and a handful of parmesan; roll into meatballs.',
       'Brown meatballs in a hot pan, then simmer in marinara sauce for 20 minutes.',
@@ -32,7 +30,13 @@ export const seedRecipes: Recipe[] = [
     name: 'Sheet-Pan Fajitas',
     slot: 'dinner',
     time: '30 min',
-    ingredients: ['Chicken breast, sliced', 'Bell peppers', 'Onion', 'Fajita seasoning', 'Tortillas'],
+    ingredients: [
+      { amount: '', name: 'Chicken breast, sliced' },
+      { amount: '', name: 'Bell peppers' },
+      { amount: '', name: 'Onion' },
+      { amount: '', name: 'Fajita seasoning' },
+      { amount: '', name: 'Tortillas' },
+    ],
     steps: [
       'Toss sliced chicken, peppers, and onion with fajita seasoning and oil.',
       'Spread on a sheet pan and roast at 425°F for 18-20 minutes.',
@@ -44,7 +48,13 @@ export const seedRecipes: Recipe[] = [
     name: 'Veggie Fried Rice',
     slot: 'dinner',
     time: '20 min',
-    ingredients: ['Cooked rice (day-old is best)', 'Frozen peas & carrots', '2 eggs', 'Soy sauce', 'Green onion'],
+    ingredients: [
+      { amount: '', name: 'Cooked rice (day-old is best)' },
+      { amount: '', name: 'Frozen peas & carrots' },
+      { amount: '2', name: 'eggs' },
+      { amount: '', name: 'Soy sauce' },
+      { amount: '', name: 'Green onion' },
+    ],
     steps: [
       'Scramble eggs in a hot wok or pan, then set aside.',
       'Stir-fry peas and carrots for 2-3 minutes.',
@@ -57,7 +67,13 @@ export const seedRecipes: Recipe[] = [
     name: 'Overnight Oats',
     slot: 'breakfast',
     time: '5 min (+overnight)',
-    ingredients: ['Rolled oats', 'Milk', 'Yogurt', 'Honey', 'Fruit of choice'],
+    ingredients: [
+      { amount: '', name: 'Rolled oats' },
+      { amount: '', name: 'Milk' },
+      { amount: '', name: 'Yogurt' },
+      { amount: '', name: 'Honey' },
+      { amount: '', name: 'Fruit of choice' },
+    ],
     steps: [
       'Combine oats, milk, yogurt, and honey in a jar.',
       'Refrigerate overnight.',
@@ -69,7 +85,14 @@ export const seedRecipes: Recipe[] = [
     name: 'Turkey Club Wraps',
     slot: 'lunch',
     time: '15 min',
-    ingredients: ['Tortillas', 'Sliced turkey', 'Bacon', 'Lettuce', 'Tomato', 'Mayo'],
+    ingredients: [
+      { amount: '', name: 'Tortillas' },
+      { amount: '', name: 'Sliced turkey' },
+      { amount: '', name: 'Bacon' },
+      { amount: '', name: 'Lettuce' },
+      { amount: '', name: 'Tomato' },
+      { amount: '', name: 'Mayo' },
+    ],
     steps: [
       'Lay out tortillas and spread with mayo.',
       'Layer turkey, bacon, lettuce, and tomato.',
@@ -81,7 +104,12 @@ export const seedRecipes: Recipe[] = [
     name: 'Homemade Pizza Night',
     slot: 'dinner',
     time: '35 min',
-    ingredients: ['Pizza dough', 'Marinara sauce', 'Mozzarella', 'Toppings of choice'],
+    ingredients: [
+      { amount: '', name: 'Pizza dough' },
+      { amount: '', name: 'Marinara sauce' },
+      { amount: '', name: 'Mozzarella' },
+      { amount: '', name: 'Toppings of choice' },
+    ],
     steps: [
       'Stretch dough onto a floured pan or pizza stone.',
       'Spread sauce, then cheese and toppings.',

@@ -58,6 +58,39 @@ export type BoardItem = {
   autoDelete?: BoardAutoDelete | null;
 };
 
+/** One ingredient line on a Recipe — kept as a separate amount/name pair
+ * (rather than one free-text string) so the Recipes screen can align
+ * amounts in a column and so a future "add to grocery list" feature could
+ * read amounts programmatically. */
+export type Ingredient = {
+  amount: string;
+  name: string;
+};
+
+export type Recipe = {
+  id: string;
+  name: string;
+  slot: MealSlotType;
+  time: string;
+  ingredients: Ingredient[];
+  steps: string[];
+};
+
+/** A family-submitted meal idea for the weekly plan (the Suggestions
+ * screen's "Meal ideas" list). Picking a day for it is optional — an idea
+ * can just sit here with no day/slot at all, or be scheduled right away. */
+export type MealSuggestion = {
+  id: string;
+  name: string;
+  /** Zero or more family members credited with suggesting this idea. */
+  suggestedByIds: string[];
+  /** Set once/if this idea has been scheduled into the weekly plan (the day
+   * + meal slot it was assigned to) — null/undefined while it's still just
+   * an idea with no day picked yet. */
+  day?: DayOfWeek | null;
+  slot?: MealSlotType | null;
+};
+
 export type CalendarEventSource = 'local' | 'google' | 'apple';
 
 export type CalendarEvent = {

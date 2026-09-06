@@ -9,6 +9,7 @@ import { BoardsIcon, BookIcon, MealIcon, PlusIcon, StarIcon } from '../component
 import { PrimaryButton, SegmentedControl } from '../components/ui';
 import { DayOfWeek, Meal, MealSlotType } from '../store/types';
 import { confirmAction } from '../lib/alerts';
+import { useColumnWidth } from '../lib/layout';
 
 function StarRatingPicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   const theme = useTheme();
@@ -36,6 +37,11 @@ export function MealPlansScreen() {
 
   const [editing, setEditing] = useState<{ day: DayOfWeek; slot: MealSlotType; meal?: Meal } | null>(null);
 
+  // Measured integer column width for the 7-across planner — a `${100 / 7}%`
+  // style wraps Sunday onto its own row in Expo Go (see useColumnWidth).
+  const [dayColWidth, onPlannerLayout] = useColumnWidth(7);
+  const dayColStyle = dayColWidth != null ? { flexGrow: 0, flexShrink: 0, flexBasis: dayColWidth, width: dayColWidth } : null;
+
   const mealFor = (day: DayOfWeek, slot: MealSlotType) => meals.find((m) => m.day === day && m.slot === slot);
 
   return (
@@ -53,12 +59,13 @@ export function MealPlansScreen() {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.plannerWrap}>
-        <View style={styles.planner}>
+        <View style={styles.planner} onLayout={onPlannerLayout}>
           {WEEKDAY_LABELS.map(({ key, label }) => (
             <Text
               key={key}
               style={[
                 styles.dayHead,
+                dayColStyle,
                 { fontFamily: theme.fonts.headSemiBold, color: key === today ? theme.colors.mealDk : theme.colors.inkSoft },
               ]}
             >
@@ -82,6 +89,7 @@ export function MealPlansScreen() {
                     onPress={() => setEditing({ day: key, slot, meal })}
                     style={[
                       styles.slot,
+                      dayColStyle,
                       { backgroundColor: theme.colors.panel },
                       isToday && { backgroundColor: theme.colors.mealBg, borderWidth: 2, borderColor: theme.colors.meal },
                       !meal && styles.emptySlot,

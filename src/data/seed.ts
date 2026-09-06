@@ -1,7 +1,7 @@
 // Placeholder starter data so the app has something to show on first launch.
 // Everything here is fully editable/removable from within the app (Settings,
 // and each screen's own add/remove controls) — nothing is hardcoded at runtime.
-import { BoardColumn, BoardItem, CalendarEvent, Chore, FamilyMember, Meal } from '../store/types';
+import { BoardColumn, BoardItem, CalendarEvent, Chore, FamilyMember, Meal, MealSuggestion } from '../store/types';
 
 export const seedFamily: FamilyMember[] = [
   { id: 'mom', name: 'Mom', color: '#D98CA6', initials: 'M', birthday: '1988-04-12' },
@@ -99,6 +99,14 @@ export const seedEvents: CalendarEvent[] = [
   { id: 'e5', date: isoDateInCurrentMonth(new Date().getDate()), time: '6:00 PM', endTime: '7:30 PM', title: 'Family dinner', personIds: ['dad', 'mom', 'milo', 'kaya'], source: 'local' },
   { id: 'e6', date: isoDateInCurrentMonth(new Date().getDate() + 1), title: 'Book club', personIds: ['mom'], source: 'local' },
   { id: 'e7', date: isoDateInCurrentMonth(Math.min(new Date().getDate() + 3, 28)), title: 'Piano lesson', personIds: ['kaya'], source: 'local' },
+];
+
+// A couple of example meal ideas so the Suggestions screen's "Meal ideas"
+// list isn't empty on first launch — neither has a day/slot picked yet,
+// which is the normal state for a fresh idea (see MealSuggestion.day/slot).
+export const seedMealSuggestions: MealSuggestion[] = [
+  { id: 's1', name: 'Korean BBQ Bowls', suggestedByIds: ['milo'], day: null, slot: null },
+  { id: 's2', name: 'Breakfast-for-dinner night', suggestedByIds: ['mom', 'kaya'], day: null, slot: null },
 ];
 
 export const dailyChallenges = [

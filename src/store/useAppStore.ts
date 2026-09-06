@@ -12,7 +12,9 @@ import {
   seedEvents,
   seedFamily,
   seedMeals,
+  seedMealSuggestions,
 } from '../data/seed';
+import { seedRecipes } from '../data/recipes';
 import {
   BoardColumn,
   BoardItem,
@@ -20,6 +22,8 @@ import {
   Chore,
   FamilyMember,
   Meal,
+  MealSuggestion,
+  Recipe,
   ThemePreference,
   WidgetId,
   WidgetSize,
@@ -691,12 +695,160 @@ export const useCalendarStore = create<CalendarState>()((set, get) => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Verse of the Day — pulled from a real RSS feed (see src/lib/verseFeed.ts)
-// instead of the app's own small built-in rotation. Cached here (persisted,
-// so it survives a reload without refetching) keyed by the date it was
-// fetched for; VerseWidgetContent shows its own local fallback verse
-// whenever there's nothing cached for today yet (first load, or the fetch
-// failed) and swaps in the RSS text once/if it arrives.
+// Recipes — the Recipes screen's library. `ingredients` is stored as jsonb
+// (an array of {amount, name} objects) rather than a second table; supabase-js
+// already parses jsonb columns into plain JS values, so recipeFromRow can
+// use it directly, same as the text[] array columns elsewhere in this file.
+// ---------------------------------------------------------------------------
+function recipeFromRow(row: any): Recipe {
+  return {
+    id: row.id,
+    name: row.name,
+    slot: row.slot,
+    time: row.time,
+    ingredients: row.ingredients ?? [],
+    steps: row.steps ?? [],
+  };
+}
+function recipeToRow(id: string, r: Partial<Omit<Recipe, 'id'>>) {
+  const row: Record<string, unknown> = { id };
+  if (r.name !== undefined) row.name = r.name;
+  if (r.slot !== undefined) row.slot = r.slot;
+  if (r.time !== undefined) row.time = r.time;
+  if (r.ingredients !== undefined) row.ingredients = r.ingredients;
+  if (r.steps !== undefined) row.steps = r.steps;
+  return row;
+}
+
+type RecipesState = {
+  recipes: Recipe[];
+  hydrated: boolean;
+  hydrate: () => Promise<void>;
+  addRecipe: (r: Omit<Recipe, 'id'>) => void;
+  updateRecipe: (id: string, patch: Partial<Omit<Recipe, 'id'>>) => void;
+  removeRecipe: (id: string) => void;
+};
+
+let recipesSubscribed = false;
+
+export const useRecipesStore = create<RecipesState>()((set, get) => ({
+  recipes: seedRecipes,
+  hydrated: false,
+  hydrate: async () => {
+    const { ok, rows } = await fetchTable('recipes');
+    if (ok) set({ recipes: rows.map(recipeFromRow) });
+    set({ hydrated: true });
+    if (!recipesSubscribed) {
+      recipesSubscribed = true;
+      subscribeRealtime(
+        'recipes',
+        (row) => {
+          const r = recipeFromRow(row);
+          set((s) => ({
+            recipes: s.recipes.some((x) => x.id === r.id) ? s.recipes.map((x) => (x.id === r.id ? r : x)) : [...s.recipes, r],
+          }));
+        },
+        (id) => set((s) => ({ recipes: s.recipes.filter((r) => r.id !== id) })),
+      );
+    }
+  },
+  addRecipe: (r) => {
+    const id = makeId();
+    const recipe: Recipe = { ...r, id };
+    set((s) => ({ recipes: [...s.recipes, recipe] }));
+    syncInsert('recipes', recipeToRow(id, recipe));
+  },
+  updateRecipe: (id, patch) => {
+    set((s) => ({ recipes: s.recipes.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+    syncUpdate('recipes', id, recipeToRow(id, patch));
+  },
+  removeRecipe: (id) => {
+    set((s) => ({ recipes: s.recipes.filter((r) => r.id !== id) }));
+    syncDelete('recipes', id);
+  },
+}));
+
+// ---------------------------------------------------------------------------
+// Meal suggestions — the Suggestions screen's "Meal ideas" list. Picking a
+// day (day/slot) is optional at submission time (see SuggestionsScreen); an
+// idea can be scheduled later from the ideas list itself, which just fills
+// in day/slot on the same row rather than creating a new record.
+// ---------------------------------------------------------------------------
+function suggestionFromRow(row: any): MealSuggestion {
+  return {
+    id: row.id,
+    name: row.name,
+    suggestedByIds: row.suggested_by_ids ?? [],
+    day: row.day ?? null,
+    slot: row.slot ?? null,
+  };
+}
+function suggestionToRow(id: string, s: Partial<Omit<MealSuggestion, 'id'>>) {
+  const row: Record<string, unknown> = { id };
+  if (s.name !== undefined) row.name = s.name;
+  if (s.suggestedByIds !== undefined) row.suggested_by_ids = s.suggestedByIds;
+  if (s.day !== undefined) row.day = s.day ?? null;
+  if (s.slot !== undefined) row.slot = s.slot ?? null;
+  return row;
+}
+
+type SuggestionsState = {
+  suggestions: MealSuggestion[];
+  hydrated: boolean;
+  hydrate: () => Promise<void>;
+  addSuggestion: (s: Omit<MealSuggestion, 'id'>) => void;
+  updateSuggestion: (id: string, patch: Partial<Omit<MealSuggestion, 'id'>>) => void;
+  removeSuggestion: (id: string) => void;
+};
+
+let suggestionsSubscribed = false;
+
+export const useSuggestionsStore = create<SuggestionsState>()((set, get) => ({
+  suggestions: seedMealSuggestions,
+  hydrated: false,
+  hydrate: async () => {
+    const { ok, rows } = await fetchTable('meal_suggestions');
+    if (ok) set({ suggestions: rows.map(suggestionFromRow) });
+    set({ hydrated: true });
+    if (!suggestionsSubscribed) {
+      suggestionsSubscribed = true;
+      subscribeRealtime(
+        'meal_suggestions',
+        (row) => {
+          const s2 = suggestionFromRow(row);
+          set((s) => ({
+            suggestions: s.suggestions.some((x) => x.id === s2.id)
+              ? s.suggestions.map((x) => (x.id === s2.id ? s2 : x))
+              : [...s.suggestions, s2],
+          }));
+        },
+        (id) => set((s) => ({ suggestions: s.suggestions.filter((x) => x.id !== id) })),
+      );
+    }
+  },
+  addSuggestion: (s) => {
+    const id = makeId();
+    const suggestion: MealSuggestion = { ...s, id };
+    set((st) => ({ suggestions: [...st.suggestions, suggestion] }));
+    syncInsert('meal_suggestions', suggestionToRow(id, suggestion));
+  },
+  updateSuggestion: (id, patch) => {
+    set((st) => ({ suggestions: st.suggestions.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+    syncUpdate('meal_suggestions', id, suggestionToRow(id, patch));
+  },
+  removeSuggestion: (id) => {
+    set((st) => ({ suggestions: st.suggestions.filter((x) => x.id !== id) }));
+    syncDelete('meal_suggestions', id);
+  },
+}));
+
+// ---------------------------------------------------------------------------
+// Verse of the Day — pulled from OurManna's JSON API (see
+// src/lib/verseFeed.ts) instead of the app's own small built-in rotation.
+// Cached here (persisted, so it survives a reload without refetching) keyed
+// by the date it was fetched for; VerseWidgetContent shows its own local
+// fallback verse whenever there's nothing cached for today yet (first load,
+// or the fetch failed) and swaps in the fetched text once/if it arrives.
 // ---------------------------------------------------------------------------
 type VerseState = {
   date: string | null;
@@ -722,12 +874,12 @@ export const useVerseStore = create<VerseState>()(
         if (item) {
           set({ date: today, text: item.text, reference: item.reference, fetching: false });
         } else {
-          // Couldn't reach/parse the feed this time (offline, a CORS block
-          // in a browser preview, or a feed hiccup) — leave `date` unset so
-          // the next launch (or the next call while this one's still open)
-          // tries again, instead of getting stuck on "no answer" for the
-          // rest of the day. The widget shows its own local fallback verse
-          // in the meantime.
+          // Couldn't reach/parse the API this time (offline, the API down,
+          // or an unexpected response) — leave `date` unset so the next
+          // launch (or the next call while this one's still open) tries
+          // again, instead of getting stuck on "no answer" for the rest of
+          // the day. The widget shows its own local fallback verse in the
+          // meantime.
           set({ fetching: false });
         }
       },
@@ -746,13 +898,15 @@ export async function hydrateAllStores(): Promise<void> {
     useMealsStore.getState().hydrate(),
     useBoardsStore.getState().hydrate(),
     useCalendarStore.getState().hydrate(),
+    useRecipesStore.getState().hydrate(),
+    useSuggestionsStore.getState().hydrate(),
   ]);
-  // These two are deliberately NOT awaited above: the verse RSS fetch is a
+  // These two are deliberately NOT awaited above: the verse fetch is a
   // "nice to have" (VerseWidgetContent already shows a local fallback verse
-  // instantly and swaps in the RSS text if/when it arrives) and shouldn't be
-  // able to delay the wall display's boot the way a slow or CORS-blocked
-  // third-party feed could; the auto-delete sweep is a recurring background
-  // job, not something to wait on either.
+  // instantly and swaps in the fetched text if/when it arrives) and
+  // shouldn't be able to delay the wall display's boot the way a slow or
+  // unreachable third-party API could; the auto-delete sweep is a
+  // recurring background job, not something to wait on either.
   useVerseStore.getState().fetchIfNeeded();
   startAutoDeleteSweep();
 }
@@ -831,22 +985,49 @@ type DashboardLayoutState = {
 };
 
 // ---------------------------------------------------------------------------
-// Daily challenge answer (resets each day)
+// Daily challenge — "Would You Rather" votes. Kept device-local (like the
+// other persisted slices in this file) rather than synced to Supabase: the
+// wall tablet is where the family gathers to vote, and each person picks who
+// they are from the family list before tapping an option, so one device
+// holds the whole tally. `votesDate` pins the tally to a single day — the
+// widget shows an empty tally on any day whose date doesn't match, and the
+// first vote of a new day clears the previous day's votes. So a new "Would
+// You Rather" always starts fresh the next morning, and a plain "Question"
+// day (no options) just shows no voting UI at all.
 // ---------------------------------------------------------------------------
+type DailyChoice = 'A' | 'B';
+
 type DailyState = {
-  answeredDate: string | null;
-  answer: 'A' | 'B' | null;
-  setAnswer: (date: string, answer: 'A' | 'B') => void;
+  votesDate: string | null;
+  /** family member id -> their pick for `votesDate` */
+  votes: Record<string, DailyChoice>;
+  /** Record one person's vote for `date` — or, if they tap the option they
+   * already picked, retract it. Rolls the tally over to a fresh day on the
+   * first vote whose `date` differs from `votesDate`. */
+  castVote: (date: string, personId: string, choice: DailyChoice) => void;
 };
 
 export const useDailyStore = create<DailyState>()(
   persist(
     (set) => ({
-      answeredDate: null,
-      answer: null,
-      setAnswer: (date, answer) => set({ answeredDate: date, answer }),
+      votesDate: null,
+      votes: {},
+      castVote: (date, personId, choice) =>
+        set((s) => {
+          const base = s.votesDate === date ? s.votes : {};
+          const next = { ...base };
+          if (next[personId] === choice) {
+            delete next[personId];
+          } else {
+            next[personId] = choice;
+          }
+          return { votesDate: date, votes: next };
+        }),
     }),
-    { name: 'roost.daily', storage },
+    // Bumped from 'roost.daily' (which persisted a single {answeredDate,
+    // answer}) — the old shape has no `votes`, so a fresh key avoids merging
+    // a `votes: undefined` into the new state on upgrade.
+    { name: 'roost.daily.v2', storage },
   ),
 );
 

@@ -27,6 +27,11 @@
 -- auto-delete (calendar_events.end_time, board_items.done_at,
 -- board_items.auto_delete below), run `supabase/migrate_v3.sql` once — it
 -- just adds the new nullable columns, no data conversion needed.
+--
+-- And if your project predates the `recipes` / `meal_suggestions` tables
+-- below, run `supabase/migrate_v4.sql` once — it creates both new tables,
+-- turns on RLS + realtime for them, and seeds the recipe library. Nothing
+-- else changes shape, so no data conversion needed.
 
 -- ---------------------------------------------------------------------------
 -- Tables
@@ -85,6 +90,23 @@ create table if not exists calendar_events (
   source      text not null default 'local'  -- 'local' | 'google' | 'apple'
 );
 
+create table if not exists recipes (
+  id           text primary key,
+  name         text not null,
+  slot         text not null,                 -- 'breakfast' | 'lunch' | 'dinner'
+  time         text not null,                 -- free-form, e.g. "30 min"
+  ingredients  jsonb not null default '[]',    -- array of {amount, name} objects
+  steps        text[] not null default '{}'
+);
+
+create table if not exists meal_suggestions (
+  id                text primary key,
+  name              text not null,
+  suggested_by_ids  text[] not null default '{}',  -- zero or more family_members.id — see note on meals.chef_ids above
+  day               text,     -- 'mon'..'sun', nullable — null means "just an idea", not yet scheduled
+  slot              text      -- 'breakfast' | 'lunch' | 'dinner', nullable — see note on day above
+);
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security — open to the app's anon key (see note above)
 -- ---------------------------------------------------------------------------
@@ -95,12 +117,14 @@ alter table meals           enable row level security;
 alter table board_columns   enable row level security;
 alter table board_items     enable row level security;
 alter table calendar_events enable row level security;
+alter table recipes         enable row level security;
+alter table meal_suggestions enable row level security;
 
 do $$
 declare
   t text;
 begin
-  foreach t in array array['family_members','chores','meals','board_columns','board_items','calendar_events']
+  foreach t in array array['family_members','chores','meals','board_columns','board_items','calendar_events','recipes','meal_suggestions']
   loop
     execute format('drop policy if exists "allow all to anon" on %I;', t);
     execute format(
@@ -123,6 +147,8 @@ alter publication supabase_realtime add table meals;
 alter publication supabase_realtime add table board_columns;
 alter publication supabase_realtime add table board_items;
 alter publication supabase_realtime add table calendar_events;
+alter publication supabase_realtime add table recipes;
+alter publication supabase_realtime add table meal_suggestions;
 
 -- ---------------------------------------------------------------------------
 -- Starter data — same starter family/chores/meals/boards the app used to
@@ -195,4 +221,20 @@ insert into calendar_events (id, date, time, title, person_ids, source) values
   ('e5', current_date::text,                                                '6:00 PM', 'Family dinner',        array['dad','mom','milo','kaya'],   'local'),
   ('e6', (current_date + 1)::text,                                          null,      'Book club',            array['mom'],                       'local'),
   ('e7', (current_date + 3)::text,                                          null,      'Piano lesson',         array['kaya'],                      'local')
+on conflict (id) do nothing;
+
+-- Starter recipe library (see src/data/recipes.ts → seedRecipes, which this
+-- mirrors). meal_suggestions is intentionally left unseeded — "Meal ideas"
+-- starts empty on a fresh install and fills in as your family suggests meals.
+insert into recipes (id, name, slot, time, ingredients, steps) values
+  ('r1', 'Spaghetti & Meatballs', 'dinner', '40 min', '[{"amount": "1 lb", "name": "ground beef"}, {"amount": "12 oz", "name": "spaghetti"}, {"amount": "24 oz", "name": "marinara sauce"}, {"amount": "1/2 cup", "name": "breadcrumbs"}, {"amount": "1", "name": "egg"}, {"amount": "1/4 cup", "name": "grated parmesan"}]'::jsonb, array['Mix ground beef, breadcrumbs, egg, and a handful of parmesan; roll into meatballs.', 'Brown meatballs in a hot pan, then simmer in marinara sauce for 20 minutes.', 'Boil spaghetti according to package directions.', 'Serve meatballs and sauce over spaghetti, topped with extra parmesan.']),
+  ('r2', 'Sheet-Pan Fajitas', 'dinner', '30 min', '[{"amount": "1.5 lb", "name": "chicken breast, sliced"}, {"amount": "2", "name": "bell peppers, sliced"}, {"amount": "1", "name": "onion, sliced"}, {"amount": "2 tbsp", "name": "fajita seasoning"}, {"amount": "8", "name": "tortillas"}]'::jsonb, array['Toss sliced chicken, peppers, and onion with fajita seasoning and oil.', 'Spread on a sheet pan and roast at 425°F for 18-20 minutes.', 'Warm tortillas and serve with the chicken and veggies, plus your favorite toppings.']),
+  ('r3', 'Veggie Fried Rice', 'dinner', '20 min', '[{"amount": "4 cups", "name": "cooked rice (day-old is best)"}, {"amount": "1 cup", "name": "frozen peas & carrots"}, {"amount": "2", "name": "eggs"}, {"amount": "3 tbsp", "name": "soy sauce"}, {"amount": "2", "name": "green onions, sliced"}]'::jsonb, array['Scramble eggs in a hot wok or pan, then set aside.', 'Stir-fry peas and carrots for 2-3 minutes.', 'Add rice, breaking up clumps, and stir-fry until heated through.', 'Stir in soy sauce and eggs, top with sliced green onion.']),
+  ('r4', 'Overnight Oats', 'breakfast', '5 min (+overnight)', '[{"amount": "1/2 cup", "name": "rolled oats"}, {"amount": "1/2 cup", "name": "milk"}, {"amount": "1/4 cup", "name": "yogurt"}, {"amount": "1 tbsp", "name": "honey"}, {"amount": "to taste", "name": "fruit of choice"}]'::jsonb, array['Combine oats, milk, yogurt, and honey in a jar.', 'Refrigerate overnight.', 'Top with fresh fruit before serving.']),
+  ('r5', 'Turkey Club Wraps', 'lunch', '15 min', '[{"amount": "4", "name": "tortillas"}, {"amount": "1/2 lb", "name": "sliced turkey"}, {"amount": "6 slices", "name": "bacon, cooked"}, {"amount": "1 cup", "name": "shredded lettuce"}, {"amount": "1", "name": "tomato, sliced"}, {"amount": "4 tbsp", "name": "mayo"}]'::jsonb, array['Lay out tortillas and spread with mayo.', 'Layer turkey, bacon, lettuce, and tomato.', 'Roll tightly and slice in half to serve.']),
+  ('r6', 'Homemade Pizza Night', 'dinner', '35 min', '[{"amount": "1 lb", "name": "pizza dough"}, {"amount": "1 cup", "name": "marinara sauce"}, {"amount": "2 cups", "name": "shredded mozzarella"}, {"amount": "to taste", "name": "toppings of choice"}]'::jsonb, array['Stretch dough onto a floured pan or pizza stone.', 'Spread sauce, then cheese and toppings.', 'Bake at 475°F for 12-15 minutes, until the crust is golden.']),
+  ('r7', 'Chicken Caesar Salad', 'lunch', '20 min', '[{"amount": "2", "name": "chicken breasts, grilled & sliced"}, {"amount": "1 head", "name": "romaine lettuce, chopped"}, {"amount": "1/2 cup", "name": "caesar dressing"}, {"amount": "1/2 cup", "name": "croutons"}, {"amount": "1/4 cup", "name": "shaved parmesan"}]'::jsonb, array['Season and grill chicken breasts, then slice.', 'Toss chopped romaine with caesar dressing.', 'Top with sliced chicken, croutons, and shaved parmesan.']),
+  ('r8', 'Blueberry Pancakes', 'breakfast', '25 min', '[{"amount": "1.5 cups", "name": "flour"}, {"amount": "3 tbsp", "name": "sugar"}, {"amount": "1 cup", "name": "milk"}, {"amount": "1", "name": "egg"}, {"amount": "1 cup", "name": "blueberries"}, {"amount": "2 tbsp", "name": "butter, melted"}]'::jsonb, array['Whisk flour, sugar, milk, egg, and melted butter into a smooth batter.', 'Fold in blueberries.', 'Cook 1/4-cup scoops on a hot griddle until bubbles form, then flip.', 'Serve warm with syrup and extra butter.']),
+  ('r9', 'Slow Cooker Chili', 'dinner', '15 min (+6 hrs slow cook)', '[{"amount": "1.5 lb", "name": "ground beef, browned"}, {"amount": "2 cans (15 oz)", "name": "kidney beans, drained"}, {"amount": "1 can (28 oz)", "name": "crushed tomatoes"}, {"amount": "1", "name": "onion, diced"}, {"amount": "2 tbsp", "name": "chili powder"}, {"amount": "to taste", "name": "shredded cheese, for topping"}]'::jsonb, array['Brown ground beef with the diced onion, then drain.', 'Add beef and onion to the slow cooker with beans, crushed tomatoes, and chili powder.', 'Cook on low for 6 hours, stirring occasionally.', 'Serve topped with shredded cheese.']),
+  ('r10', 'Egg & Veggie Scramble', 'breakfast', '15 min', '[{"amount": "6", "name": "eggs"}, {"amount": "1", "name": "bell pepper, diced"}, {"amount": "1/2", "name": "onion, diced"}, {"amount": "1 cup", "name": "baby spinach"}, {"amount": "1/2 cup", "name": "shredded cheddar"}]'::jsonb, array['Sauté bell pepper and onion in a pan until softened.', 'Add spinach and cook until just wilted.', 'Pour in whisked eggs and scramble until just set.', 'Top with shredded cheddar and serve.'])
 on conflict (id) do nothing;

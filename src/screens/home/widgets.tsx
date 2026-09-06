@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeProvider';
 import {
@@ -14,18 +15,32 @@ import {
 } from '../../store/useAppStore';
 import { dailyChallenges, verses } from '../../data/seed';
 import { addDays, buildMonthGrid, buildWeekGrid, dayOfWeek, dayOfYear, formatWeekTitle, todayIso } from '../../lib/date';
-import { CalendarIcon, ChevronLeftIcon, ChevronRightIcon, ChoresIcon, MealIcon, QuestionIcon, StarIcon } from '../../components/icons';
+import { CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ChoresIcon, MealIcon, QuestionIcon, StarIcon } from '../../components/icons';
+import { Avatar } from '../../components/Avatar';
 import { SegmentedControl } from '../../components/ui';
 import { WidgetSize } from '../../store/types';
+import { useColumnWidth } from '../../lib/layout';
 
 const Row = ({ children }: { children: React.ReactNode }) => <View style={{ marginBottom: 10 }}>{children}</View>;
 
-function SectionTitle({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+function SectionTitle({
+  icon,
+  children,
+  right,
+}: {
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  /** Optional trailing content, pushed to the far right of the title row. */
+  right?: React.ReactNode;
+}) {
   const theme = useTheme();
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
       {icon}
-      <Text style={{ fontFamily: theme.fonts.head, color: theme.colors.ink, fontSize: 15 }}>{children}</Text>
+      <Text numberOfLines={1} style={{ fontFamily: theme.fonts.head, color: theme.colors.ink, fontSize: 15, flexShrink: 1 }}>
+        {children}
+      </Text>
+      {right != null && <View style={{ marginLeft: 'auto', flexShrink: 0, paddingLeft: 8 }}>{right}</View>}
     </View>
   );
 }
@@ -43,6 +58,11 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
   const grid = useMemo(() => buildMonthGrid(cursor.getFullYear(), cursor.getMonth()), [cursor.getFullYear(), cursor.getMonth()]);
   const visibleEvents = events.filter((e) => e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id)));
   const days = view === 'month' ? grid : buildWeekGrid(cursor);
+
+  // Measured integer column width — a `${100 / 7}%` style wraps Saturday
+  // onto its own row in Expo Go (see useColumnWidth).
+  const [calColWidth, onCalGridLayout] = useColumnWidth(7);
+  const calColStyle = calColWidth != null ? { flexGrow: 0, flexShrink: 0, flexBasis: calColWidth, width: calColWidth } : null;
 
   const personColor = (ids: string[]) => family.find((m) => m.id === ids[0])?.color ?? theme.colors.inkSoft;
 
@@ -83,12 +103,12 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
       </View>
       <View style={styles.dowRow}>
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-          <Text key={i} style={[styles.dow, { color: theme.colors.inkSoft, fontFamily: theme.fonts.headSemiBold }]}>
+          <Text key={i} style={[styles.dow, calColStyle, { color: theme.colors.inkSoft, fontFamily: theme.fonts.headSemiBold }]}>
             {d}
           </Text>
         ))}
       </View>
-      <View style={styles.calGrid}>
+      <View style={styles.calGrid} onLayout={onCalGridLayout}>
         {days.map(({ date, inMonth }, i) => {
           const iso = date.toISOString().slice(0, 10);
           const isToday = iso === todayIso();
@@ -99,6 +119,7 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
               onPress={() => navigation.navigate('Calendar')}
               style={[
                 styles.calCell,
+                calColStyle,
                 { backgroundColor: isToday ? theme.colors.panel : theme.isDark ? '#FFFFFF0A' : '#FFFFFFA8' },
                 isToday && { borderWidth: 2, borderColor: theme.colors.cal },
                 !inMonth && { opacity: 0.35 },
@@ -275,15 +296,80 @@ export function TodoWidgetContent() {
 // ---------------------------------------------------------------------------
 export function ChallengeWidgetContent() {
   const theme = useTheme();
-  const { answeredDate, answer, setAnswer } = useDailyStore();
+  const family = useFamilyStore((s) => s.members);
+  const votesDate = useDailyStore((s) => s.votesDate);
+  const rawVotes = useDailyStore((s) => s.votes);
+  const castVote = useDailyStore((s) => s.castVote);
+
   const idx = dayOfYear() % dailyChallenges.length;
   const challenge = dailyChallenges[idx];
   const today = todayIso();
-  const todaysAnswer = answeredDate === today ? answer : null;
+  const isVote = !!(challenge.optionA && challenge.optionB);
+
+  // Only today's votes count — a stale tally left over from a previous
+  // "Would You Rather" day is ignored here, and gets wiped by castVote the
+  // moment someone votes today.
+  const votes = votesDate === today ? rawVotes : {};
+
+  // Which family member is currently at the tablet. Cleared after each fresh
+  // vote so the next person can't overwrite the last one by accident.
+  const [voterId, setVoterId] = useState<string | null>(null);
+  const voter = family.find((m) => m.id === voterId) ?? null;
+
+  const votersFor = (key: 'A' | 'B') => family.filter((m) => votes[m.id] === key);
+
+  const onOption = (key: 'A' | 'B') => {
+    if (!voter) return;
+    const had = votes[voter.id];
+    castVote(today, voter.id, key);
+    if (had !== key) setVoterId(null); // a fresh vote (or a change) — retract keeps you selected
+  };
+
+  // The "who's voting" picker — compact avatar strip that sits in the widget
+  // header (top-right) rather than eating a full row below the options.
+  const voterPicker = isVote ? (
+    <View style={{ flexDirection: 'row', gap: 4 }}>
+      {family.map((m) => {
+        const selected = m.id === voterId;
+        const voted = !!votes[m.id];
+        return (
+          <Pressable key={m.id} onPress={() => setVoterId(selected ? null : m.id)} hitSlop={4}>
+            <View style={{ opacity: !voterId || selected ? 1 : 0.4 }}>
+              <Avatar
+                initials={m.initials}
+                color={m.color}
+                size={24}
+                style={selected ? { borderColor: theme.colors.boardsDk } : undefined}
+              />
+              {voted && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    right: -2,
+                    bottom: -2,
+                    width: 12,
+                    height: 12,
+                    borderRadius: 6,
+                    backgroundColor: theme.colors.boardsDk,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <CheckIcon size={8} color="#fff" />
+                </View>
+              )}
+            </View>
+          </Pressable>
+        );
+      })}
+    </View>
+  ) : undefined;
 
   return (
     <View>
-      <SectionTitle icon={<QuestionIcon size={17} color={theme.colors.ink} />}>Daily Challenge</SectionTitle>
+      <SectionTitle icon={<QuestionIcon size={17} color={theme.colors.ink} />} right={voterPicker}>
+        Daily Challenge
+      </SectionTitle>
       <View
         style={{
           alignSelf: 'flex-start',
@@ -301,28 +387,55 @@ export function ChallengeWidgetContent() {
       <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 14, color: theme.colors.ink, marginBottom: 10 }}>
         {challenge.question}
       </Text>
-      {challenge.optionA && challenge.optionB && (
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          {[challenge.optionA, challenge.optionB].map((opt, i) => {
-            const key = i === 0 ? 'A' : 'B';
-            const picked = todaysAnswer === key;
-            return (
-              <Pressable
-                key={opt}
-                onPress={() => setAnswer(today, key)}
-                style={[
-                  styles.optBtn,
-                  { backgroundColor: theme.isDark ? '#FFFFFF16' : '#FFFFFFB0' },
-                  picked && { borderColor: theme.colors.boardsDk, borderWidth: 2 },
-                ]}
-              >
-                <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 11.5, color: theme.colors.ink }}>
-                  {opt}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+      {isVote && (
+        <>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {[challenge.optionA, challenge.optionB].map((opt, i) => {
+              const key = i === 0 ? ('A' as const) : ('B' as const);
+              const optVoters = votersFor(key);
+              const picked = voter ? votes[voter.id] === key : false;
+              return (
+                <Pressable
+                  key={opt}
+                  onPress={() => onOption(key)}
+                  style={[
+                    styles.optBtn,
+                    { backgroundColor: theme.isDark ? '#FFFFFF16' : '#FFFFFFB0' },
+                    picked && { borderColor: theme.colors.boardsDk, borderWidth: 2 },
+                    !voter && { opacity: 0.55 },
+                  ]}
+                >
+                  <Text
+                    style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 11.5, color: theme.colors.ink, textAlign: 'center' }}
+                  >
+                    {opt}
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 5, minHeight: 8 }}>
+                    <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 11, color: theme.colors.inkSoft }}>
+                      {optVoters.length}
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 2 }}>
+                      {optVoters.slice(0, 5).map((p) => (
+                        <View key={p.id} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: p.color }} />
+                      ))}
+                    </View>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Text
+            style={{
+              fontFamily: theme.fonts.bodyBold,
+              fontSize: 10,
+              color: theme.colors.inkSoft,
+              textAlign: 'center',
+              marginTop: 6,
+            }}
+          >
+            {voter ? `Voting as ${voter.name}` : 'Tap your initials above to vote'}
+          </Text>
+        </>
       )}
     </View>
   );
@@ -365,6 +478,52 @@ export function VerseWidgetContent() {
 }
 
 // ---------------------------------------------------------------------------
+// A circular progress ring: a faint full-circle track with a coloured arc
+// drawn on top that sweeps clockwise from 12 o'clock in proportion to
+// `progress` (0-1). `children` are centred inside (used for the "2/3" label).
+function ProgressRing({
+  size,
+  stroke,
+  progress,
+  color,
+  trackColor,
+  children,
+}: {
+  size: number;
+  stroke: number;
+  progress: number;
+  color: string;
+  trackColor: string;
+  children?: React.ReactNode;
+}) {
+  const clamped = Math.max(0, Math.min(1, progress));
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={size} height={size} style={{ position: 'absolute' }}>
+        <Circle cx={size / 2} cy={size / 2} r={radius} stroke={trackColor} strokeWidth={stroke} fill="none" />
+        {clamped > 0 && (
+          <Circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke={color}
+            strokeWidth={stroke}
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={circumference * (1 - clamped)}
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        )}
+      </Svg>
+      {children}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 export function ChoresWidgetContent() {
   const theme = useTheme();
   const chores = useChoresStore((s) => s.chores);
@@ -388,32 +547,17 @@ export function ChoresWidgetContent() {
       {withChores.map(({ member, total, done, stars }) => (
         <View key={member.id} style={{ flex: 1, alignItems: 'center', gap: 6 }}>
           <Text style={{ fontFamily: theme.fonts.head, fontSize: 13, color: member.color }}>{member.name}</Text>
-          <View
-            style={{
-              width: 60,
-              height: 60,
-              borderRadius: 30,
-              borderWidth: 7,
-              borderColor: theme.isDark ? '#FFFFFF20' : '#FFFFFFB0',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
+          <ProgressRing
+            size={60}
+            stroke={7}
+            progress={total ? done / total : 0}
+            trackColor={theme.isDark ? '#FFFFFF20' : '#FFFFFFB0'}
+            color={member.color}
           >
-            <View
-              style={{
-                position: 'absolute',
-                width: 60,
-                height: 60,
-                borderRadius: 30,
-                borderWidth: 7,
-                borderColor: member.color,
-                opacity: total ? done / total : 0,
-              }}
-            />
             <Text style={{ fontFamily: theme.fonts.head, fontSize: 12, color: theme.colors.ink }}>
               {done}/{total}
             </Text>
-          </View>
+          </ProgressRing>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
             <StarIcon size={11} color={theme.colors.star} />
             <Text style={{ fontSize: 10.5, fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }}>

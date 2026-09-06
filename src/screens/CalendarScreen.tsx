@@ -19,6 +19,7 @@ import {
 import { CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from '../components/icons';
 import { PrimaryButton, SegmentedControl } from '../components/ui';
 import { confirmAction } from '../lib/alerts';
+import { useColumnWidth } from '../lib/layout';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -49,6 +50,12 @@ export function CalendarScreen() {
     () => buildMonthGrid(cursor.getFullYear(), cursor.getMonth()),
     [cursor.getFullYear(), cursor.getMonth()],
   );
+
+  // Measured integer column width for the 7-across month/week grid — a
+  // `${100 / 7}%` style wraps Saturday onto its own row in Expo Go (see
+  // useColumnWidth).
+  const [dayColWidth, onGridLayout] = useColumnWidth(7);
+  const dayColStyle = dayColWidth != null ? { flexGrow: 0, flexShrink: 0, flexBasis: dayColWidth, width: dayColWidth } : null;
 
   const visibleEvents = events.filter((e) => e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id)));
 
@@ -156,12 +163,15 @@ export function CalendarScreen() {
           <View style={[styles.gridCard, { backgroundColor: theme.colors.panel }]}>
             <View style={styles.dowRow}>
               {DOW.map((d) => (
-                <Text key={d} style={[styles.dow, { color: theme.colors.inkSoft, fontFamily: theme.fonts.headSemiBold }]}>
+                <Text
+                  key={d}
+                  style={[styles.dow, dayColStyle, { color: theme.colors.inkSoft, fontFamily: theme.fonts.headSemiBold }]}
+                >
                   {d}
                 </Text>
               ))}
             </View>
-            <View style={styles.monthGrid}>
+            <View style={styles.monthGrid} onLayout={onGridLayout}>
               {days.map(({ date, inMonth }, i) => {
                 const iso = toIso(date);
                 const isToday = iso === today;
@@ -176,6 +186,7 @@ export function CalendarScreen() {
                     }}
                     style={[
                       styles.dayCell,
+                      dayColStyle,
                       view === 'week' && styles.dayCellWeek,
                       { backgroundColor: theme.isDark ? '#FFFFFF08' : '#FBF7EF' },
                       isToday && { backgroundColor: theme.colors.calBg, borderWidth: 2, borderColor: theme.colors.cal },
