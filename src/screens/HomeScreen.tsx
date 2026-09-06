@@ -5,6 +5,7 @@ import { useTheme } from '../theme/ThemeProvider';
 import { useDashboardLayoutStore } from '../store/useAppStore';
 import { WidgetId } from '../store/types';
 import { WidgetShell } from './home/WidgetShell';
+import { NARROW_BREAKPOINT } from '../lib/layout';
 import {
   CalendarWidgetContent,
   ChallengeWidgetContent,
@@ -19,8 +20,9 @@ import {
 // the fixed 3-column dashboard grid has no room to breathe, so we fall back
 // to a single stacked scrolling column instead. The 10.1" tablet this app
 // targets runs at 1920×1200 landscape — comfortably above this threshold —
-// so in normal use the grid below is what's shown.
-const GRID_BREAKPOINT = 900;
+// so in normal use the grid below is what's shown. Shared with TopBar so the
+// header restacks at the same width the grid does.
+const GRID_BREAKPOINT = NARROW_BREAKPOINT;
 
 export function HomeScreen() {
   const theme = useTheme();

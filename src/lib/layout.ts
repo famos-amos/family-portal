@@ -2,6 +2,15 @@ import { useCallback, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
 
 /**
+ * Width (in dp) below which the app switches from its tablet-first layout to
+ * a narrow/phone layout — the dashboard drops from a 3-column grid to a
+ * single stacked column, and the top bar splits its brand/avatars row from
+ * its tab row (tabs scroll horizontally instead of wrapping into a stack).
+ * The 10.1" target tablet runs well above this.
+ */
+export const NARROW_BREAKPOINT = 900;
+
+/**
  * Splits a container into `count` equal columns using an integer pixel width
  * measured from the container itself, instead of a `${100 / count}%` style on
  * each child.
