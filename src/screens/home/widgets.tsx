@@ -19,7 +19,6 @@ import { CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ChoresIcon,
 import { Avatar } from '../../components/Avatar';
 import { SegmentedControl } from '../../components/ui';
 import { WidgetSize } from '../../store/types';
-import { useColumnWidth } from '../../lib/layout';
 
 const Row = ({ children }: { children: React.ReactNode }) => <View style={{ marginBottom: 10 }}>{children}</View>;
 
@@ -59,10 +58,13 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
   const visibleEvents = events.filter((e) => e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id)));
   const days = view === 'month' ? grid : buildWeekGrid(cursor);
 
-  // Measured integer column width — a `${100 / 7}%` style wraps Saturday
-  // onto its own row in Expo Go (see useColumnWidth).
-  const [calColWidth, onCalGridLayout] = useColumnWidth(7);
-  const calColStyle = calColWidth != null ? { flexGrow: 0, flexShrink: 0, flexBasis: calColWidth, width: calColWidth } : null;
+  // Render the grid as one flex row per week (7 × flex:1 cells) rather than a
+  // single flex-wrap container sized to an exact measured column width. A
+  // measured width races the widget's own resize — at some tablet heights the
+  // stale value was a hair too wide and Saturday wrapped under Sunday. With
+  // per-week rows and no flexWrap, the 7th column can never wrap.
+  const weeks: (typeof days)[] = [];
+  for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
 
   const personColor = (ids: string[]) => family.find((m) => m.id === ids[0])?.color ?? theme.colors.inkSoft;
 
@@ -103,41 +105,44 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
       </View>
       <View style={styles.dowRow}>
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-          <Text key={i} style={[styles.dow, calColStyle, { color: theme.colors.inkSoft, fontFamily: theme.fonts.headSemiBold }]}>
+          <Text key={i} style={[styles.dow, { color: theme.colors.inkSoft, fontFamily: theme.fonts.headSemiBold }]}>
             {d}
           </Text>
         ))}
       </View>
-      <View style={styles.calGrid} onLayout={onCalGridLayout}>
-        {days.map(({ date, inMonth }, i) => {
-          const iso = date.toISOString().slice(0, 10);
-          const isToday = iso === todayIso();
-          const dayEvents = visibleEvents.filter((e) => e.date === iso);
-          return (
-            <Pressable
-              key={i}
-              onPress={() => navigation.navigate('Calendar')}
-              style={[
-                styles.calCell,
-                calColStyle,
-                { backgroundColor: isToday ? theme.colors.panel : theme.isDark ? '#FFFFFF0A' : '#FFFFFFA8' },
-                isToday && { borderWidth: 2, borderColor: theme.colors.cal },
-                !inMonth && { opacity: 0.35 },
-              ]}
-            >
-              <Text style={{ fontSize: 10.5, color: theme.colors.ink, fontFamily: theme.fonts.bodyBold }}>
-                {date.getDate()}
-              </Text>
-              {size !== 'sm' && (
-                <View style={styles.dotRow}>
-                  {dayEvents.slice(0, 3).map((e) => (
-                    <View key={e.id} style={[styles.dot, { backgroundColor: personColor(e.personIds) }]} />
-                  ))}
-                </View>
-              )}
-            </Pressable>
-          );
-        })}
+      <View style={styles.calGrid}>
+        {weeks.map((week, wi) => (
+          <View key={wi} style={styles.calWeekRow}>
+            {week.map(({ date, inMonth }, i) => {
+              const iso = date.toISOString().slice(0, 10);
+              const isToday = iso === todayIso();
+              const dayEvents = visibleEvents.filter((e) => e.date === iso);
+              return (
+                <Pressable
+                  key={i}
+                  onPress={() => navigation.navigate('Calendar')}
+                  style={[
+                    styles.calCell,
+                    { backgroundColor: isToday ? theme.colors.panel : theme.isDark ? '#FFFFFF0A' : '#FFFFFFA8' },
+                    isToday && { borderWidth: 2, borderColor: theme.colors.cal },
+                    !inMonth && { opacity: 0.35 },
+                  ]}
+                >
+                  <Text style={{ fontSize: 10.5, color: theme.colors.ink, fontFamily: theme.fonts.bodyBold }}>
+                    {date.getDate()}
+                  </Text>
+                  {size !== 'sm' && (
+                    <View style={styles.dotRow}>
+                      {dayEvents.slice(0, 3).map((e) => (
+                        <View key={e.id} style={[styles.dot, { backgroundColor: personColor(e.personIds) }]} />
+                      ))}
+                    </View>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
       </View>
       {size === 'lg' && (
         <View style={styles.legendRow}>
@@ -158,10 +163,13 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
 // ---------------------------------------------------------------------------
 export function EventsWidgetContent({ size }: { size: WidgetSize }) {
   const theme = useTheme();
+  const navigation = useNavigation<any>();
   const events = useCalendarStore((s) => s.events);
   const hidden = useSettingsStore((s) => s.hiddenPersonIds);
   const family = useFamilyStore((s) => s.members);
   const today = todayIso();
+  const openTodayInCalendar = () =>
+    navigation.navigate('Calendar', { view: 'day', date: today, ts: Date.now() });
   const todays = events
     .filter((e) => e.date === today && (e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id))))
     .sort((a, b) => (a.time ?? '').localeCompare(b.time ?? ''));
@@ -170,7 +178,7 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
   const list = size === 'sm' ? todays.slice(0, 2) : todays;
 
   return (
-    <View>
+    <Pressable onPress={openTodayInCalendar} style={{ flex: 1 }}>
       <SectionTitle icon={<CalendarIcon size={17} color={theme.colors.ink} />}>Today's Events</SectionTitle>
       {list.length === 0 && (
         <Text style={{ color: theme.colors.inkSoft, fontFamily: theme.fonts.body, fontSize: 13 }}>
@@ -198,7 +206,7 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
           </View>
         );
       })}
-    </View>
+    </Pressable>
   );
 }
 
@@ -384,7 +392,10 @@ export function ChallengeWidgetContent() {
           {challenge.tag}
         </Text>
       </View>
-      <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 14, color: theme.colors.ink, marginBottom: 10 }}>
+      <Text
+        maxFontSizeMultiplier={1.2}
+        style={{ fontFamily: theme.fonts.bodyBold, fontSize: 12, lineHeight: 16, color: theme.colors.ink, marginBottom: 10 }}
+      >
         {challenge.question}
       </Text>
       {isVote && (
@@ -406,17 +417,21 @@ export function ChallengeWidgetContent() {
                   ]}
                 >
                   <Text
-                    style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 11.5, color: theme.colors.ink, textAlign: 'center' }}
+                    maxFontSizeMultiplier={1.1}
+                    style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 10.5, color: theme.colors.ink, textAlign: 'center' }}
                   >
                     {opt}
                   </Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 5, minHeight: 8 }}>
-                    <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 11, color: theme.colors.inkSoft }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3, minHeight: 7 }}>
+                    <Text
+                      maxFontSizeMultiplier={1.1}
+                      style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 9.5, color: theme.colors.inkSoft }}
+                    >
                       {optVoters.length}
                     </Text>
                     <View style={{ flexDirection: 'row', gap: 2 }}>
                       {optVoters.slice(0, 5).map((p) => (
-                        <View key={p.id} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: p.color }} />
+                        <View key={p.id} style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: p.color }} />
                       ))}
                     </View>
                   </View>
@@ -575,9 +590,11 @@ const styles = StyleSheet.create({
   calNavBtn: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#ffffffb0', alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   dowRow: { flexDirection: 'row', marginTop: 8 },
   dow: { flex: 1, textAlign: 'center', fontSize: 10 },
-  calGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  calGrid: {},
+  calWeekRow: { flexDirection: 'row' },
   calCell: {
-    width: `${100 / 7}%`,
+    flex: 1,
+    minWidth: 0,
     aspectRatio: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -594,5 +611,5 @@ const styles = StyleSheet.create({
   mealRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderTopWidth: 1, marginTop: 4 },
   todoRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
   todoBox: { width: 17, height: 17, borderRadius: 6, borderWidth: 2 },
-  optBtn: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 12, borderWidth: 2, borderColor: 'transparent' },
+  optBtn: { flex: 1, alignItems: 'center', paddingVertical: 6, paddingHorizontal: 6, borderRadius: 10, borderWidth: 2, borderColor: 'transparent' },
 });

@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useRoute, type RouteProp } from '@react-navigation/native';
+import { RootStackParamList } from '../navigation/types';
 import { TopBar } from '../components/TopBar';
 import { useTheme } from '../theme/ThemeProvider';
 import { useCalendarStore, useFamilyStore, useSettingsStore } from '../store/useAppStore';
@@ -31,8 +33,20 @@ const AGENDA_GUTTER = 64; // width reserved for the time-of-day labels
 
 export function CalendarScreen() {
   const theme = useTheme();
-  const [cursor, setCursor] = useState(new Date());
-  const [view, setView] = useState<'day' | 'week' | 'month'>('month');
+  const params = useRoute<RouteProp<RootStackParamList, 'Calendar'>>().params;
+  const [cursor, setCursor] = useState(() =>
+    params?.date ? new Date(`${params.date}T12:00:00`) : new Date(),
+  );
+  const [view, setView] = useState<'day' | 'week' | 'month'>(params?.view ?? 'month');
+
+  // Re-apply the requested view/date when navigating here from another screen
+  // (e.g. the home "Today's Events" widget). `ts` is bumped on every such
+  // navigation so this fires again even if view/date are unchanged.
+  React.useEffect(() => {
+    if (params?.view) setView(params.view);
+    if (params?.date) setCursor(new Date(`${params.date}T12:00:00`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.view, params?.date, params?.ts]);
   const [addOpen, setAddOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>(todayIso());
   const [prefillTime, setPrefillTime] = useState<string | undefined>(undefined);
