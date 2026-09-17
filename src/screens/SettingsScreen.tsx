@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -20,7 +20,9 @@ import { FamilyMember, ThemePreference } from '../store/types';
 import { confirmAction, notify } from '../lib/alerts';
 import {
   exchangeGoogleCode,
+  fetchGoogleCalendarList,
   fetchGoogleEvents,
+  getFreshGoogleAccessToken,
   isGoogleConfigured,
   useGoogleAuthRequest,
 } from '../lib/googleCalendar';
@@ -32,6 +34,11 @@ import {
   loadAppleCredentials,
   saveAppleCredentials,
 } from '../lib/appleCalendar';
+import {
+  addSubscribedCalendarFromLink,
+  removeSubscribedCalendarWithEvents,
+  toggleSubscribedCalendarWithRefresh,
+} from '../lib/icsCalendar';
 
 type SectionId = 'family' | 'appearance' | 'calendars' | 'notifications' | 'about';
 
@@ -277,39 +284,137 @@ function AppearanceSection() {
 function ConnectedCalendarsSection() {
   const theme = useTheme();
   const google = useSettingsStore((s) => s.google);
-  const setGoogleConnection = useSettingsStore((s) => s.setGoogleConnection);
+  const setGoogleAuth = useSettingsStore((s) => s.setGoogleAuth);
+  const disconnectGoogle = useSettingsStore((s) => s.disconnectGoogle);
   const apple = useSettingsStore((s) => s.apple);
   const setAppleConnection = useSettingsStore((s) => s.setAppleConnection);
+  const setAppleEnabled = useSettingsStore((s) => s.setAppleEnabled);
+  const subscribedCalendars = useSettingsStore((s) => s.subscribedCalendars);
   const replaceSyncedEvents = useCalendarStore((s) => s.replaceSyncedEvents);
 
   const googleConfigured = useMemo(() => isGoogleConfigured(), []);
   const [request, response, promptAsync] = useGoogleAuthRequest();
   const [googleBusy, setGoogleBusy] = useState(false);
 
+  // Refresh the account's calendar list, then pull events from every calendar
+  // in it and swap them into the app's calendar.
+  const runGoogleSync = async (accessToken: string) => {
+    const calendars = await fetchGoogleCalendarList(accessToken);
+    setGoogleAuth({ calendars });
+    const ids = calendars.length ? calendars.map((c) => c.id) : ['primary'];
+    const events = await fetchGoogleEvents(accessToken, ids);
+    replaceSyncedEvents(
+      'google',
+      events,
+      ids.map((id) => `google:${id}`),
+    );
+    return events.length;
+  };
+
+  // "Sync Now" once already connected — no browser round-trip, just refresh
+  // the access token from the stored refresh token if needed.
+  const syncGoogleNow = async () => {
+    setGoogleBusy(true);
+    try {
+      const count = await runGoogleSync(await getFreshGoogleAccessToken());
+      notify('Google Calendar synced', `Synced ${count} upcoming event(s).`);
+    } catch (err: any) {
+      notify('Google Calendar sync failed', String(err?.message ?? err));
+    } finally {
+      setGoogleBusy(false);
+    }
+  };
+
+  // Guards against redeeming the same one-time auth code twice — the effect
+  // below runs again when `request` finishes loading after a web redirect.
+  const handledAuthRef = useRef<string | null>(null);
+
   useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log('[google] auth response:', response?.type, response);
+
+    if (!response) return;
+
+    if (response.type === 'error') {
+      notify('Google sign-in failed', response.error?.message ?? 'Please try again.');
+      return;
+    }
+    if (response.type !== 'success') return; // dismiss / cancel / locked
+
+    const authKey = response.params?.code ?? response.authentication?.accessToken ?? 'ok';
+    if (handledAuthRef.current === authKey) return;
+
+    // On web the code exchange needs `request` (for codeVerifier + redirectUri),
+    // which can still be loading right after a redirect. Wait for the next run
+    // (deps include `request`) instead of bailing for good.
+    const haveNativeToken = !!response.authentication?.accessToken;
+    if (!haveNativeToken && !request) return;
+
+    handledAuthRef.current = authKey;
+
     (async () => {
-      if (response?.type === 'success' && request) {
-        setGoogleBusy(true);
-        try {
-          const { accessToken } = await exchangeGoogleCode(
-            response.params.code,
-            request.codeVerifier ?? '',
-            request.redirectUri,
-          );
-          const events = await fetchGoogleEvents(accessToken);
-          replaceSyncedEvents('google', events);
-          setGoogleConnection(true);
-          notify('Google Calendar connected', `Synced ${events.length} upcoming event(s).`);
-        } catch (err: any) {
-          notify('Google Calendar sync failed', String(err?.message ?? err));
-        } finally {
-          setGoogleBusy(false);
+      setGoogleBusy(true);
+      try {
+        let accessToken: string | undefined;
+        if (response.authentication?.accessToken) {
+          // Native: the provider already redeemed the code on-device.
+          const a = response.authentication;
+          accessToken = a.accessToken;
+          setGoogleAuth({
+            refreshToken: a.refreshToken ?? undefined,
+            accessToken: a.accessToken,
+            expiresAt: Date.now() + (a.expiresIn ?? 3600) * 1000,
+          });
+        } else if (response.params?.code && request) {
+          // Web: redeem the code via the backend (holds the client secret).
+          const t = await exchangeGoogleCode({
+            code: response.params.code,
+            codeVerifier: request.codeVerifier ?? '',
+            redirectUri: request.redirectUri,
+          });
+          accessToken = t.accessToken;
+          setGoogleAuth({
+            refreshToken: t.refreshToken,
+            accessToken: t.accessToken,
+            expiresAt: t.expiresAt,
+          });
         }
-      } else if (response?.type === 'error') {
-        notify('Google sign-in failed', response.error?.message ?? 'Please try again.');
+
+        if (!accessToken) {
+          handledAuthRef.current = null;
+          // eslint-disable-next-line no-console
+          console.error('[google] success response but no token extracted', response);
+          notify(
+            'Google sign-in incomplete',
+            'Signed in, but no access token came back. Check the console for the auth response shape.',
+          );
+          return;
+        }
+
+        // Authenticated now — reflect that in the UI regardless of whether the
+        // first events pull works.
+        setGoogleAuth({ connected: true });
+        try {
+          const count = await runGoogleSync(accessToken);
+          notify('Google Calendar connected', `Synced ${count} upcoming event(s).`);
+        } catch (syncErr: any) {
+          // eslint-disable-next-line no-console
+          console.error('[google] initial events sync failed —', syncErr);
+          notify(
+            'Connected, but the first sync failed',
+            `${String(syncErr?.message ?? syncErr)}\n\nMost often this means the Google Calendar API ` +
+              'is not enabled on the project, or the calendar.events scope was not granted on the ' +
+              'OAuth consent screen. Fix that, then tap Sync Now.',
+          );
+        }
+      } catch (err: any) {
+        handledAuthRef.current = null;
+        notify('Google sign-in failed', String(err?.message ?? err));
+      } finally {
+        setGoogleBusy(false);
       }
     })();
-  }, [response]);
+  }, [response, request]);
 
   const [appleId, setAppleId] = useState('');
   const [applePassword, setApplePassword] = useState('');
@@ -353,11 +458,50 @@ function ConnectedCalendarsSection() {
     setApplePassword('');
   };
 
+  // --- Public (subscribed) calendars — shares the same helpers the Calendar
+  // screen's toolbar uses (add/toggle/remove live in src/lib/icsCalendar).
+  const [subName, setSubName] = useState('');
+  const [subUrl, setSubUrl] = useState('');
+  const [subBusy, setSubBusy] = useState(false);
+
+  const addPublicCalendar = async () => {
+    if (!subName.trim() || !subUrl.trim()) {
+      notify('Missing info', 'Enter a name and an ICS / webcal URL.');
+      return;
+    }
+    const name = subName.trim();
+    setSubName('');
+    setSubUrl('');
+    setSubBusy(true);
+    try {
+      const { count } = await addSubscribedCalendarFromLink(name, subUrl);
+      notify('Calendar added', `Loaded ${count} event(s) from "${name}".`);
+    } catch (err: any) {
+      notify('Added, but could not load it', String(err?.message ?? err));
+    } finally {
+      setSubBusy(false);
+    }
+  };
+
+  const removePublicCalendar = (id: string, name: string) =>
+    confirmAction(
+      'Remove calendar?',
+      `Stop following "${name}" and remove its events?`,
+      'Remove',
+      () => removeSubscribedCalendarWithEvents(id),
+      { destructive: true },
+    );
+
+  const toggleAndMaybeRefresh = (id: string) => {
+    void toggleSubscribedCalendarWithRefresh(id);
+  };
+
   return (
     <View>
       <Text style={[styles.h1, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>Connected Calendars</Text>
       <Text style={[styles.sub, { fontFamily: theme.fonts.body, color: theme.colors.inkSoft }]}>
-        Two-way sync keeps Roost's calendar and your family's Google/Apple calendars matching.
+        Two-way sync keeps Roost's calendar and your family's Google/Apple calendars matching. Public
+        calendars can be followed by link (view only).
       </Text>
 
       {/* Google */}
@@ -375,11 +519,26 @@ function ConnectedCalendarsSection() {
           </Text>
         </View>
         {googleConfigured ? (
-          <PrimaryButton
-            label={googleBusy ? 'Syncing…' : google.connected ? 'Sync Now' : 'Connect'}
-            color={theme.colors.calDk}
-            onPress={() => (google.connected ? promptAsync() : promptAsync())}
-          />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {google.connected && (
+              <>
+                <Switch
+                  value={google.enabled !== false}
+                  onValueChange={(v) => setGoogleAuth({ enabled: v })}
+                />
+                <Pressable onPress={disconnectGoogle} disabled={googleBusy} hitSlop={6}>
+                  <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.danger }}>
+                    Disconnect
+                  </Text>
+                </Pressable>
+              </>
+            )}
+            <PrimaryButton
+              label={googleBusy ? 'Syncing…' : google.connected ? 'Sync Now' : 'Connect'}
+              color={theme.colors.calDk}
+              onPress={() => (google.connected ? syncGoogleNow() : promptAsync())}
+            />
+          </View>
         ) : (
           <View style={[styles.disabledPill, { backgroundColor: theme.colors.border }]}>
             <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.inkSoft }}>
@@ -388,6 +547,11 @@ function ConnectedCalendarsSection() {
           </View>
         )}
       </View>
+      {google.connected && google.enabled === false && (
+        <Text style={{ fontFamily: theme.fonts.body, fontSize: 11.5, color: theme.colors.inkSoft, marginTop: -6, marginBottom: 8 }}>
+          Google events are hidden and local changes aren't pushed to Google while this is off.
+        </Text>
+      )}
 
       {/* Apple */}
       <View style={[styles.calendarCard, { flexDirection: 'column', alignItems: 'stretch', backgroundColor: theme.colors.fieldBg }]}>
@@ -405,7 +569,10 @@ function ConnectedCalendarsSection() {
             </Text>
           </View>
           {apple.connected && Platform.OS !== 'web' && (
-            <PrimaryButton label="Disconnect" color={theme.colors.danger} onPress={disconnectApple} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Switch value={apple.enabled !== false} onValueChange={setAppleEnabled} />
+              <PrimaryButton label="Disconnect" color={theme.colors.danger} onPress={disconnectApple} />
+            </View>
           )}
         </View>
 
@@ -439,6 +606,67 @@ function ConnectedCalendarsSection() {
             />
           </View>
         )}
+      </View>
+
+      {/* Public calendars (view only) */}
+      <View style={[styles.calendarCard, { flexDirection: 'column', alignItems: 'stretch', backgroundColor: theme.colors.fieldBg }]}>
+        <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 15, color: theme.colors.ink }}>
+          Public calendars
+        </Text>
+        <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft, marginTop: 2 }}>
+          Follow any calendar by its ICS or webcal link (e.g. a school, sports team, or a Google
+          calendar's "public address in iCal format"). View only — these events can't be edited here.
+        </Text>
+
+        {subscribedCalendars.length > 0 && (
+          <View style={{ marginTop: 12, gap: 8 }}>
+            {subscribedCalendars.map((c) => (
+              <View
+                key={c.id}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 }}
+              >
+                <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: c.color }} />
+                <View style={{ flex: 1 }}>
+                  <Text numberOfLines={1} style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.ink }}>
+                    {c.name}
+                  </Text>
+                  <Text numberOfLines={1} style={{ fontFamily: theme.fonts.body, fontSize: 11, color: theme.colors.inkSoft }}>
+                    {c.url}
+                  </Text>
+                </View>
+                <Switch value={c.enabled} onValueChange={() => toggleAndMaybeRefresh(c.id)} />
+                <Pressable onPress={() => removePublicCalendar(c.id, c.name)} hitSlop={8}>
+                  <TrashIcon size={16} color={theme.colors.danger} />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        )}
+
+        <View style={{ marginTop: 12, gap: 8 }}>
+          <TextInput
+            value={subName}
+            onChangeText={setSubName}
+            placeholder="Calendar name (e.g. Neighborhood)"
+            placeholderTextColor={theme.colors.inkSoft}
+            style={[styles.input, { backgroundColor: theme.colors.panel, color: theme.colors.ink }]}
+          />
+          <TextInput
+            value={subUrl}
+            onChangeText={setSubUrl}
+            placeholder="https://…/basic.ics  or  webcal://…"
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholderTextColor={theme.colors.inkSoft}
+            style={[styles.input, { backgroundColor: theme.colors.panel, color: theme.colors.ink }]}
+          />
+          <PrimaryButton
+            label={subBusy ? 'Loading…' : 'Add calendar'}
+            color={theme.colors.calDk}
+            icon={<PlusIcon size={15} color="#fff" />}
+            onPress={addPublicCalendar}
+          />
+        </View>
       </View>
     </View>
   );

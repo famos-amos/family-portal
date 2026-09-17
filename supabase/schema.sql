@@ -87,8 +87,14 @@ create table if not exists calendar_events (
   end_time    text,                -- e.g. "4:30 PM", nullable = no set duration
   title       text not null,
   person_ids  text[] not null default '{}',  -- zero or more family_members.id — see note on meals.chef_ids above
-  source      text not null default 'local'  -- 'local' | 'google' | 'apple'
+  source      text not null default 'local', -- 'local' | 'google' | 'apple' | 'subscription'
+  calendar_id text,                -- 'local' | 'google' | 'apple' | 'sub:<subscribed calendar id>'
+  google_id   text                 -- the event's id on Google Calendar, once mirrored there
 );
+-- Safe to re-run: adds the two columns above to a calendar_events table that
+-- predates subscribed calendars / per-event target calendars.
+alter table calendar_events add column if not exists calendar_id text;
+alter table calendar_events add column if not exists google_id   text;
 
 create table if not exists recipes (
   id           text primary key,

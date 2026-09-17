@@ -91,7 +91,35 @@ export type MealSuggestion = {
   slot?: MealSlotType | null;
 };
 
-export type CalendarEventSource = 'local' | 'google' | 'apple';
+// Where an event originated:
+//   'local'        — created in this app
+//   'google'       — mirrored to / from a connected Google Calendar
+//   'apple'        — pulled from a connected iCloud calendar
+//   'subscription' — pulled (read-only) from a subscribed public ICS link
+export type CalendarEventSource = 'local' | 'google' | 'apple' | 'subscription';
+
+/** Identifier for the calendar an event lives on:
+ *   'local'                — app-only
+ *   'google:<gcal id>'     — a specific calendar within the connected Google
+ *                            account ('google:primary', 'google:abc@group…').
+ *                            The bare legacy value 'google' is treated as
+ *                            'google:primary'.
+ *   'apple'                — the connected iCloud calendar
+ *   'sub:<id>'             — a subscribed public calendar (SubscribedCalendar)
+ * Chosen per-event in the add/edit form; drives which calendar a change is
+ * pushed to. */
+export type CalendarId = 'local' | 'google' | 'apple' | `google:${string}` | `sub:${string}`;
+
+/** One calendar in the connected Google account (from calendarList). */
+export type GoogleCalendarSummary = {
+  id: string;
+  summary: string;
+  primary: boolean;
+  /** owner/writer access — only these can be picked as a target for new events. */
+  writable: boolean;
+  /** Google's own display color for this calendar (hex), if it returned one. */
+  color?: string;
+};
 
 export type CalendarEvent = {
   id: string;
@@ -106,6 +134,25 @@ export type CalendarEvent = {
   /** Zero or more family members this event involves. */
   personIds: string[];
   source: CalendarEventSource;
+  /** Which calendar this event belongs to / syncs with. Defaults to
+   * `'local'` when omitted (older rows). */
+  calendarId?: CalendarId;
+  /** The event's id on Google Calendar, set once it's been mirrored there so
+   * later edits/deletes can target the same remote event. */
+  googleId?: string;
+};
+
+/** A public calendar the household follows by its ICS / webcal URL. Read-only
+ * — its events show up alongside everything else but can't be edited here.
+ * Lives in device-local settings (like the Google/Apple connections). */
+export type SubscribedCalendar = {
+  id: string;
+  name: string;
+  /** ICS or webcal URL (webcal:// is normalised to https:// before fetch). */
+  url: string;
+  color: string;
+  /** When false, the calendar's events are hidden everywhere and not refreshed. */
+  enabled: boolean;
 };
 
 export type ThemePreference = 'light' | 'dark' | 'system';

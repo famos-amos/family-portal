@@ -5,7 +5,23 @@ import { RootStackParamList } from '../navigation/types';
 import { TopBar } from '../components/TopBar';
 import { useTheme } from '../theme/ThemeProvider';
 import { useCalendarStore, useFamilyStore, useSettingsStore } from '../store/useAppStore';
-import { CalendarEvent, FamilyMember } from '../store/types';
+import { CalendarEvent, CalendarId, FamilyMember, GoogleCalendarSummary } from '../store/types';
+import { personColorOptions } from '../theme/colors';
+import {
+  deleteEventFromGoogle,
+  googleCalIdFor,
+  mirrorNewEventToGoogle,
+  moveEventBetweenGoogleCalendars,
+  pushEventEditToGoogle,
+} from '../lib/googleCalendar';
+import { isEventCalendarEnabled } from '../lib/calendarVisibility';
+import { eventCalendarColor } from '../lib/calendarColors';
+import {
+  addSubscribedCalendarFromLink,
+  refreshEnabledSubscribedCalendars,
+  removeSubscribedCalendarWithEvents,
+  toggleSubscribedCalendarWithRefresh,
+} from '../lib/icsCalendar';
 import {
   addDays,
   buildMonthGrid,
@@ -20,7 +36,7 @@ import {
 } from '../lib/date';
 import { CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from '../components/icons';
 import { PrimaryButton, SegmentedControl } from '../components/ui';
-import { confirmAction } from '../lib/alerts';
+import { confirmAction, notify } from '../lib/alerts';
 import { useColumnWidth } from '../lib/layout';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -51,6 +67,10 @@ export function CalendarScreen() {
   const [selectedDate, setSelectedDate] = useState<string>(todayIso());
   const [prefillTime, setPrefillTime] = useState<string | undefined>(undefined);
   const [editing, setEditing] = useState<CalendarEvent | null>(null);
+  const [subModalOpen, setSubModalOpen] = useState(false);
+  const [subName, setSubName] = useState('');
+  const [subUrl, setSubUrl] = useState('');
+  const [subBusy, setSubBusy] = useState(false);
 
   const events = useCalendarStore((s) => s.events);
   const addEvent = useCalendarStore((s) => s.addEvent);
@@ -59,6 +79,58 @@ export function CalendarScreen() {
   const family = useFamilyStore((s) => s.members);
   const hidden = useSettingsStore((s) => s.hiddenPersonIds);
   const toggleVisibility = useSettingsStore((s) => s.togglePersonVisibility);
+  const google = useSettingsStore((s) => s.google);
+  const apple = useSettingsStore((s) => s.apple);
+  const subscribedCalendars = useSettingsStore((s) => s.subscribedCalendars);
+  const hiddenGoogleCalendarIds = useSettingsStore((s) => s.hiddenGoogleCalendarIds);
+  const toggleGoogleCalendarVisibility = useSettingsStore((s) => s.toggleGoogleCalendarVisibility);
+  const googleCalendarColors = useSettingsStore((s) => s.googleCalendarColors);
+  const setGoogleCalendarColor = useSettingsStore((s) => s.setGoogleCalendarColor);
+  const resetGoogleCalendarColor = useSettingsStore((s) => s.resetGoogleCalendarColor);
+  const [colorPickerFor, setColorPickerFor] = useState<{ id: string; name: string } | null>(null);
+
+  // Refresh the followed public calendars whenever this screen opens.
+  React.useEffect(() => {
+    refreshEnabledSubscribedCalendars();
+  }, []);
+
+  // The calendars a *new or edited* event can be filed under — "This app only"
+  // plus each *writable* calendar in the connected Google account (Work,
+  // Personal, School, …) and iCloud if connected.
+  const targetCalendars = useMemo<{ id: CalendarId; label: string }[]>(() => {
+    const list: { id: CalendarId; label: string }[] = [{ id: 'local', label: 'This app only' }];
+    if (google.connected && google.enabled !== false) {
+      const writable = (google.calendars ?? []).filter((c) => c.writable);
+      if (writable.length) {
+        writable
+          .slice()
+          .sort((a, b) =>
+            a.primary === b.primary ? a.summary.localeCompare(b.summary) : a.primary ? -1 : 1,
+          )
+          .forEach((c) => list.push({ id: `google:${c.id}`, label: c.summary }));
+      } else {
+        list.push({ id: 'google:primary', label: 'Google Calendar' });
+      }
+    }
+    if (apple.connected && apple.enabled !== false) list.push({ id: 'apple', label: 'iCloud Calendar' });
+    return list;
+  }, [google.connected, google.enabled, google.calendars, apple.connected, apple.enabled]);
+
+  // Human-readable name for whichever calendar an event sits on (for the
+  // read-only view of a subscribed-calendar event, and the chips).
+  const calendarLabel = (e: CalendarEvent): string => {
+    if (e.source === 'subscription') {
+      const sub = subscribedCalendars.find((c) => `sub:${c.id}` === e.calendarId);
+      return sub ? sub.name : 'Public calendar';
+    }
+    const gcal = googleCalIdFor(e.calendarId);
+    if (gcal || e.source === 'google') {
+      const found = (google.calendars ?? []).find((c) => c.id === (gcal ?? 'primary'));
+      return found ? found.summary : 'Google Calendar';
+    }
+    if (e.source === 'apple' || e.calendarId === 'apple') return 'iCloud Calendar';
+    return 'This app only';
+  };
 
   const grid = useMemo(
     () => buildMonthGrid(cursor.getFullYear(), cursor.getMonth()),
@@ -71,7 +143,125 @@ export function CalendarScreen() {
   const [dayColWidth, onGridLayout] = useColumnWidth(7);
   const dayColStyle = dayColWidth != null ? { flexGrow: 0, flexShrink: 0, flexBasis: dayColWidth, width: dayColWidth } : null;
 
-  const visibleEvents = events.filter((e) => e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id)));
+  const calToggles = { google, apple, subscribedCalendars, hiddenGoogleCalendarIds };
+  const visibleEvents = events.filter(
+    (e) =>
+      isEventCalendarEnabled(e, calToggles) &&
+      (e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id))),
+  );
+
+  // --- Add / edit / delete, mirroring to Google when the event belongs there.
+  const createEvent = (patch: {
+    title: string;
+    time: string;
+    endTime: string;
+    personIds: string[];
+    calendarId: CalendarId;
+  }) => {
+    const created = addEvent({
+      date: selectedDate,
+      title: patch.title,
+      time: patch.time || undefined,
+      endTime: patch.endTime || undefined,
+      personIds: patch.personIds,
+      calendarId: patch.calendarId,
+    });
+    if (googleCalIdFor(patch.calendarId)) {
+      mirrorNewEventToGoogle(created, patch.calendarId)
+        .then((googleId) => {
+          if (googleId) updateEvent(created.id, { googleId, source: 'google' });
+        })
+        .catch((err) => notify('Could not add to Google Calendar', String(err?.message ?? err)));
+    }
+  };
+
+  const saveEventEdit = (
+    original: CalendarEvent,
+    patch: { title: string; time: string; endTime: string; personIds: string[]; calendarId: CalendarId },
+  ) => {
+    const next: CalendarEvent = {
+      ...original,
+      title: patch.title,
+      time: patch.time || undefined,
+      endTime: patch.endTime || undefined,
+      personIds: patch.personIds,
+      calendarId: patch.calendarId,
+    };
+    updateEvent(original.id, {
+      title: next.title,
+      time: next.time,
+      endTime: next.endTime,
+      personIds: next.personIds,
+      calendarId: next.calendarId,
+    });
+
+    const oldGcal = googleCalIdFor(original.calendarId);
+    const newGcal = googleCalIdFor(patch.calendarId);
+    const hadGoogleCopy = !!original.googleId && !!oldGcal;
+
+    if (hadGoogleCopy && newGcal && oldGcal === newGcal) {
+      // Same Google calendar — just update it.
+      pushEventEditToGoogle(next).catch((err) =>
+        notify('Could not update on Google Calendar', String(err?.message ?? err)),
+      );
+    } else if (hadGoogleCopy && newGcal && oldGcal !== newGcal) {
+      // Moved between two Google calendars (e.g. Work → Personal).
+      moveEventBetweenGoogleCalendars(original.calendarId, patch.calendarId, original.googleId!)
+        .then((moved) => (moved ? pushEventEditToGoogle(next) : undefined))
+        .catch((err) => notify('Could not move on Google Calendar', String(err?.message ?? err)));
+    } else if (hadGoogleCopy && !newGcal) {
+      // Google → app-only / iCloud: remove the Google copy.
+      deleteEventFromGoogle(original.calendarId, original.googleId!)
+        .then(() => updateEvent(original.id, { googleId: undefined, source: 'local' }))
+        .catch((err) => notify('Could not remove from Google Calendar', String(err?.message ?? err)));
+    } else if (!hadGoogleCopy && newGcal) {
+      // App-only / iCloud → Google: create the Google copy.
+      mirrorNewEventToGoogle(next, patch.calendarId)
+        .then((googleId) => {
+          if (googleId) updateEvent(original.id, { googleId, source: 'google' });
+        })
+        .catch((err) => notify('Could not add to Google Calendar', String(err?.message ?? err)));
+    }
+  };
+
+  const deleteEvent = (target: CalendarEvent) => {
+    if (target.googleId && googleCalIdFor(target.calendarId)) {
+      deleteEventFromGoogle(target.calendarId, target.googleId).catch((err) =>
+        notify('Could not delete from Google Calendar', String(err?.message ?? err)),
+      );
+    }
+    removeEvent(target.id);
+  };
+
+  // --- Public calendar subscriptions (managed from the toolbar) -----------
+  const addPublicCalendar = async () => {
+    if (!subName.trim() || !subUrl.trim()) {
+      notify('Missing info', 'Enter a name and an ICS / webcal link.');
+      return;
+    }
+    setSubBusy(true);
+    try {
+      const { count } = await addSubscribedCalendarFromLink(subName, subUrl);
+      setSubName('');
+      setSubUrl('');
+      setSubModalOpen(false);
+      notify('Calendar added', `Loaded ${count} event(s).`);
+    } catch (err: any) {
+      setSubModalOpen(false);
+      notify('Added, but could not load it', String(err?.message ?? err));
+    } finally {
+      setSubBusy(false);
+    }
+  };
+
+  const removePublicCalendar = (id: string, name: string) =>
+    confirmAction(
+      'Remove calendar?',
+      `Stop following "${name}" and delete its events?`,
+      'Remove',
+      () => removeSubscribedCalendarWithEvents(id),
+      { destructive: true },
+    );
 
   const today = todayIso();
   const days = view === 'month' ? grid : view === 'week' ? buildWeekGrid(cursor) : [];
@@ -86,7 +276,7 @@ export function CalendarScreen() {
   };
   const titleText = view === 'month' ? formatMonthTitle(cursor) : view === 'week' ? formatWeekTitle(cursor) : formatDayTitle(cursor);
 
-  const anyHidden = family.some((m) => hidden.includes(m.id));
+  const anyHidden = family.some((m) => hidden.includes(m.id)) || hiddenGoogleCalendarIds.length > 0;
 
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.colors.bg }]}>
@@ -141,7 +331,95 @@ export function CalendarScreen() {
               </Pressable>
             );
           })}
+
+          {/* Google's own sub-calendars (Work, Personal, School, …) — same
+              checkbox style as the family filters right next to them. */}
+          {google.connected &&
+            google.enabled !== false &&
+            (google.calendars ?? []).map((c, i) => {
+              const on = !hiddenGoogleCalendarIds.includes(c.id);
+              // Same formula eventCalendarColor uses, so a chip always
+              // matches the color its own events are drawn in.
+              const color = googleCalendarColors[c.id] || c.color || personColorOptions[i % personColorOptions.length];
+              return (
+                <Pressable
+                  key={c.id}
+                  onPress={() => toggleGoogleCalendarVisibility(c.id)}
+                  style={[
+                    styles.legendChip,
+                    { backgroundColor: on ? (theme.isDark ? '#FFFFFF14' : '#FFFFFFB0') : 'transparent', opacity: on ? 1 : 0.45 },
+                  ]}
+                >
+                  {/* Its own tap target (nested Pressables resolve to whichever
+                      one was actually touched, same pattern as the event chips
+                      below) — tap the color to customize it, tap the rest of
+                      the chip to show/hide the calendar. */}
+                  <Pressable onPress={() => setColorPickerFor({ id: c.id, name: c.summary })} hitSlop={6}>
+                    <View style={[styles.legendBox, on && { backgroundColor: color, borderColor: 'transparent' }]}>
+                      {on && <CheckIcon size={10} color="#fff" />}
+                    </View>
+                  </Pressable>
+                  <Text
+                    style={{
+                      fontFamily: theme.fonts.headSemiBold,
+                      fontSize: 12.5,
+                      color: theme.colors.ink,
+                      textDecorationLine: on ? 'none' : 'line-through',
+                    }}
+                  >
+                    {c.summary}
+                  </Text>
+                </Pressable>
+              );
+            })}
         </View>
+
+        {/* Public (subscribed) calendars — toggle on/off, or add one by link */}
+        <View style={styles.legend}>
+          {subscribedCalendars.map((c) => (
+            <Pressable
+              key={c.id}
+              onPress={() => toggleSubscribedCalendarWithRefresh(c.id)}
+              onLongPress={() => removePublicCalendar(c.id, c.name)}
+              style={[
+                styles.legendChip,
+                {
+                  backgroundColor: c.enabled ? (theme.isDark ? '#FFFFFF14' : '#FFFFFFB0') : 'transparent',
+                  opacity: c.enabled ? 1 : 0.45,
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.legendBox,
+                  c.enabled && { backgroundColor: c.color, borderColor: 'transparent' },
+                ]}
+              >
+                {c.enabled && <CheckIcon size={10} color="#fff" />}
+              </View>
+              <Text
+                style={{
+                  fontFamily: theme.fonts.headSemiBold,
+                  fontSize: 12.5,
+                  color: theme.colors.ink,
+                  textDecorationLine: c.enabled ? 'none' : 'line-through',
+                }}
+              >
+                {c.name}
+              </Text>
+            </Pressable>
+          ))}
+          <Pressable
+            onPress={() => setSubModalOpen(true)}
+            style={[styles.legendChip, { backgroundColor: theme.isDark ? '#FFFFFF10' : '#FFFFFF80' }]}
+          >
+            <PlusIcon size={11} color={theme.colors.inkSoft} />
+            <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12.5, color: theme.colors.inkSoft }}>
+              Add calendar
+            </Text>
+          </Pressable>
+        </View>
+
         <PrimaryButton
           label="Add Event"
           color={theme.colors.calDk}
@@ -165,6 +443,8 @@ export function CalendarScreen() {
           date={toIso(cursor)}
           events={visibleEvents.filter((e) => e.date === toIso(cursor))}
           family={family}
+          googleCalendars={google.calendars}
+          googleCalendarColors={googleCalendarColors}
           onSelectEvent={(e) => setEditing(e)}
           onAddAt={(time) => {
             setSelectedDate(toIso(cursor));
@@ -212,7 +492,10 @@ export function CalendarScreen() {
                     </Text>
                     {dayEvents.slice(0, view === 'week' ? 6 : 3).map((e) => {
                       const people = family.filter((m) => e.personIds.includes(m.id));
-                      const chipColor = people[0]?.color ?? theme.colors.inkSoft;
+                      const chipColor =
+                        people[0]?.color ??
+                        eventCalendarColor(e, google.calendars, googleCalendarColors) ??
+                        theme.colors.inkSoft;
                       return (
                         <Pressable
                           key={e.id}
@@ -260,15 +543,12 @@ export function CalendarScreen() {
         date={selectedDate}
         initial={undefined}
         defaultTime={prefillTime}
+        calendars={targetCalendars}
+        readOnly={false}
+        calendarLabel="This app only"
         onClose={() => setAddOpen(false)}
         onSave={(patch) => {
-          addEvent({
-            date: selectedDate,
-            title: patch.title,
-            time: patch.time || undefined,
-            endTime: patch.endTime || undefined,
-            personIds: patch.personIds,
-          });
+          createEvent(patch);
           setAddOpen(false);
         }}
         onDelete={undefined}
@@ -280,25 +560,127 @@ export function CalendarScreen() {
         date={editing?.date ?? selectedDate}
         initial={editing ?? undefined}
         defaultTime={undefined}
+        // Keep the event's current calendar in the list even if it's not a
+        // normal target (e.g. a read-only Google calendar), so editing can't
+        // silently move it off that calendar.
+        calendars={
+          editing?.calendarId && !targetCalendars.some((c) => c.id === editing.calendarId)
+            ? [...targetCalendars, { id: editing.calendarId, label: calendarLabel(editing) }]
+            : targetCalendars
+        }
+        readOnly={editing?.source === 'subscription'}
+        calendarLabel={editing ? calendarLabel(editing) : ''}
         onClose={() => setEditing(null)}
         onSave={(patch) => {
           if (!editing) return;
-          updateEvent(editing.id, {
-            title: patch.title,
-            time: patch.time || undefined,
-            endTime: patch.endTime || undefined,
-            personIds: patch.personIds,
-          });
+          saveEventEdit(editing, patch);
           setEditing(null);
         }}
-        onDelete={() => {
-          if (!editing) return;
-          confirmAction('Delete event?', `Remove "${editing.title}" from the calendar?`, 'Delete', () => {
-            removeEvent(editing.id);
-            setEditing(null);
-          }, { destructive: true });
-        }}
+        onDelete={
+          editing?.source === 'subscription'
+            ? undefined
+            : () => {
+                if (!editing) return;
+                confirmAction(
+                  'Delete event?',
+                  `Remove "${editing.title}" from the calendar?`,
+                  'Delete',
+                  () => {
+                    deleteEvent(editing);
+                    setEditing(null);
+                  },
+                  { destructive: true },
+                );
+              }
+        }
       />
+
+      <Modal transparent animationType="fade" visible={subModalOpen} onRequestClose={() => setSubModalOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: theme.colors.panel }]}>
+            <Text style={{ fontFamily: theme.fonts.head, fontSize: 17, color: theme.colors.ink, marginBottom: 4 }}>
+              Follow a public calendar
+            </Text>
+            <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 12, color: theme.colors.inkSoft, marginBottom: 14 }}>
+              Paste an ICS or webcal link — view only. Toggle it on/off from the chips up top.
+            </Text>
+            <TextInput
+              placeholder="Name (e.g. Neighborhood, School)"
+              placeholderTextColor={theme.colors.inkSoft}
+              value={subName}
+              onChangeText={setSubName}
+              style={[styles.input, { backgroundColor: theme.colors.fieldBg, color: theme.colors.ink }]}
+            />
+            <TextInput
+              placeholder="https://…/basic.ics  or  webcal://…"
+              placeholderTextColor={theme.colors.inkSoft}
+              value={subUrl}
+              onChangeText={setSubUrl}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={[styles.input, { backgroundColor: theme.colors.fieldBg, color: theme.colors.ink }]}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+              <Pressable onPress={() => setSubModalOpen(false)} style={[styles.modalBtn, { backgroundColor: theme.colors.fieldBg }]}>
+                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: theme.colors.inkSoft }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                disabled={subBusy || !subName.trim() || !subUrl.trim()}
+                onPress={addPublicCalendar}
+                style={[
+                  styles.modalBtn,
+                  { backgroundColor: theme.colors.ink, opacity: subBusy || !subName.trim() || !subUrl.trim() ? 0.4 : 1 },
+                ]}
+              >
+                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>
+                  {subBusy ? 'Loading…' : 'Add'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent animationType="fade" visible={colorPickerFor !== null} onRequestClose={() => setColorPickerFor(null)}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, { backgroundColor: theme.colors.panel }]}>
+            <Text style={{ fontFamily: theme.fonts.head, fontSize: 17, color: theme.colors.ink, marginBottom: 14 }}>
+              Color for "{colorPickerFor?.name}"
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+              {personColorOptions.map((sw) => {
+                const selected = !!colorPickerFor && googleCalendarColors[colorPickerFor.id] === sw;
+                return (
+                  <Pressable
+                    key={sw}
+                    onPress={() => {
+                      if (colorPickerFor) setGoogleCalendarColor(colorPickerFor.id, sw);
+                      setColorPickerFor(null);
+                    }}
+                    style={[styles.swatch, { backgroundColor: sw }, selected && { borderWidth: 3, borderColor: theme.colors.ink }]}
+                  />
+                );
+              })}
+            </View>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <Pressable
+                onPress={() => {
+                  if (colorPickerFor) resetGoogleCalendarColor(colorPickerFor.id);
+                  setColorPickerFor(null);
+                }}
+                style={[styles.modalBtn, { backgroundColor: theme.colors.fieldBg }]}
+              >
+                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: theme.colors.inkSoft }}>
+                  Use Google's color
+                </Text>
+              </Pressable>
+              <Pressable onPress={() => setColorPickerFor(null)} style={[styles.modalBtn, { backgroundColor: theme.colors.ink }]}>
+                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>Done</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -314,12 +696,16 @@ function DayAgenda({
   date,
   events,
   family,
+  googleCalendars,
+  googleCalendarColors,
   onSelectEvent,
   onAddAt,
 }: {
   date: string;
   events: CalendarEvent[];
   family: FamilyMember[];
+  googleCalendars: GoogleCalendarSummary[] | undefined;
+  googleCalendarColors: Record<string, string>;
   onSelectEvent: (e: CalendarEvent) => void;
   onAddAt: (time: string) => void;
 }) {
@@ -351,7 +737,10 @@ function DayAgenda({
           <View style={{ flex: 1, gap: 6, flexWrap: 'wrap', flexDirection: 'row' }}>
             {allDay.map((e) => {
               const people = family.filter((m) => e.personIds.includes(m.id));
-              const color = people[0]?.color ?? theme.colors.inkSoft;
+              const color =
+                people[0]?.color ??
+                eventCalendarColor(e, googleCalendars, googleCalendarColors) ??
+                theme.colors.inkSoft;
               return (
                 <Pressable
                   key={e.id}
@@ -361,7 +750,13 @@ function DayAgenda({
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     {people.length > 1 &&
                       people.slice(0, 4).map((p) => <View key={p.id} style={[styles.chipDot, { backgroundColor: p.color }]} />)}
-                    <Text style={{ fontSize: 11.5, fontFamily: theme.fonts.bodyBold, color: people[0]?.color ?? theme.colors.ink }}>
+                    <Text
+                      style={{
+                        fontSize: 11.5,
+                        fontFamily: theme.fonts.bodyBold,
+                        color: people[0]?.color ?? eventCalendarColor(e, googleCalendars, googleCalendarColors) ?? theme.colors.ink,
+                      }}
+                    >
                       {e.title}
                     </Text>
                   </View>
@@ -401,7 +796,10 @@ function DayAgenda({
             const top = (startMin / 30) * ROW_HEIGHT;
             const height = Math.max((durationMin / 30) * ROW_HEIGHT, ROW_HEIGHT * 0.5);
             const people = family.filter((m) => e.personIds.includes(m.id));
-            const color = people[0]?.color ?? theme.colors.cal;
+            const color =
+              people[0]?.color ??
+              eventCalendarColor(e, googleCalendars, googleCalendarColors) ??
+              theme.colors.cal;
             return (
               <Pressable
                 key={e.id}
@@ -466,6 +864,9 @@ function EventFormModal({
   date,
   initial,
   defaultTime,
+  calendars,
+  readOnly,
+  calendarLabel,
   onClose,
   onSave,
   onDelete,
@@ -477,8 +878,21 @@ function EventFormModal({
   /** Only used in "add" mode — pre-fills the start time when the modal was
    * opened by tapping an empty slot in the Day agenda view. */
   defaultTime: string | undefined;
+  /** Calendars a new/edited event can be filed under. */
+  calendars: { id: CalendarId; label: string }[];
+  /** True for events pulled from a subscribed public calendar — shown but not
+   * editable here. */
+  readOnly: boolean;
+  /** Display name of the event's current calendar (for the read-only view). */
+  calendarLabel: string;
   onClose: () => void;
-  onSave: (patch: { title: string; time: string; endTime: string; personIds: string[] }) => void;
+  onSave: (patch: {
+    title: string;
+    time: string;
+    endTime: string;
+    personIds: string[];
+    calendarId: CalendarId;
+  }) => void;
   onDelete: (() => void) | undefined;
 }) {
   const theme = useTheme();
@@ -487,6 +901,7 @@ function EventFormModal({
   const [time, setTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [personIds, setPersonIds] = useState<string[]>([]);
+  const [calendarId, setCalendarId] = useState<CalendarId>('local');
 
   React.useEffect(() => {
     if (visible) {
@@ -494,21 +909,26 @@ function EventFormModal({
       setTime(initial?.time ?? defaultTime ?? '');
       setEndTime(initial?.endTime ?? '');
       setPersonIds(initial?.personIds ?? []);
+      const wanted = initial?.calendarId ?? 'local';
+      setCalendarId(calendars.some((c) => c.id === wanted) ? wanted : calendars[0]?.id ?? 'local');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   if (!visible) return null;
 
+  const inputStyle = [styles.input, { backgroundColor: theme.colors.fieldBg, color: theme.colors.ink }];
+
   return (
     <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
       <View style={styles.modalBackdrop}>
         <View style={[styles.modalCard, { backgroundColor: theme.colors.panel }]}>
           <Text style={{ fontFamily: theme.fonts.head, fontSize: 17, color: theme.colors.ink, marginBottom: 4 }}>
-            {mode === 'edit' ? 'Edit Event' : 'Add Event'}
+            {readOnly ? 'Event' : mode === 'edit' ? 'Edit Event' : 'Add Event'}
           </Text>
           <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 12, color: theme.colors.inkSoft, marginBottom: 14 }}>
             {date}
+            {readOnly ? ` · from ${calendarLabel} (view only)` : ''}
           </Text>
 
           <TextInput
@@ -516,7 +936,8 @@ function EventFormModal({
             placeholderTextColor={theme.colors.inkSoft}
             value={title}
             onChangeText={setTitle}
-            style={[styles.input, { backgroundColor: theme.colors.fieldBg, color: theme.colors.ink }]}
+            editable={!readOnly}
+            style={inputStyle}
           />
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TextInput
@@ -524,44 +945,79 @@ function EventFormModal({
               placeholderTextColor={theme.colors.inkSoft}
               value={time}
               onChangeText={setTime}
-              style={[styles.input, { flex: 1, backgroundColor: theme.colors.fieldBg, color: theme.colors.ink }]}
+              editable={!readOnly}
+              style={[...inputStyle, { flex: 1 }]}
             />
             <TextInput
               placeholder="End time, e.g. 4:30 PM"
               placeholderTextColor={theme.colors.inkSoft}
               value={endTime}
               onChangeText={setEndTime}
-              style={[styles.input, { flex: 1, backgroundColor: theme.colors.fieldBg, color: theme.colors.ink }]}
+              editable={!readOnly}
+              style={[...inputStyle, { flex: 1 }]}
             />
           </View>
-          <Text style={{ fontSize: 10.5, color: theme.colors.inkSoft, fontFamily: theme.fonts.body, marginBottom: 8, marginTop: -2 }}>
-            Both optional — leave blank for an all-day event. Fill in both to set how long it runs.
-          </Text>
+          {!readOnly && (
+            <Text style={{ fontSize: 10.5, color: theme.colors.inkSoft, fontFamily: theme.fonts.body, marginBottom: 8, marginTop: -2 }}>
+              Both optional — leave blank for an all-day event. Fill in both to set how long it runs.
+            </Text>
+          )}
 
-          <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 10.5, color: theme.colors.inkSoft, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-            Who's involved (tap to select any number)
-          </Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
-            {family.map((m) => {
-              const active = personIds.includes(m.id);
-              return (
-                <Pressable
-                  key={m.id}
-                  onPress={() =>
-                    setPersonIds((prev) => (prev.includes(m.id) ? prev.filter((id) => id !== m.id) : [...prev, m.id]))
-                  }
-                  style={[
-                    styles.personChip,
-                    { backgroundColor: active ? m.color : theme.colors.fieldBg },
-                  ]}
-                >
-                  <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: active ? '#fff' : theme.colors.ink }}>
-                    {m.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          {!readOnly && calendars.length > 1 && (
+            <>
+              <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 10.5, color: theme.colors.inkSoft, marginTop: 6, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Calendar
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+                {calendars.map((c) => {
+                  const active = c.id === calendarId;
+                  return (
+                    <Pressable
+                      key={c.id}
+                      onPress={() => setCalendarId(c.id)}
+                      style={[
+                        styles.personChip,
+                        { backgroundColor: active ? theme.colors.calDk : theme.colors.fieldBg },
+                      ]}
+                    >
+                      <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: active ? '#fff' : theme.colors.ink }}>
+                        {c.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          )}
+
+          {!readOnly && (
+            <>
+              <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 10.5, color: theme.colors.inkSoft, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Who's involved (tap to select any number)
+              </Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+                {family.map((m) => {
+                  const active = personIds.includes(m.id);
+                  return (
+                    <Pressable
+                      key={m.id}
+                      onPress={() =>
+                        setPersonIds((prev) => (prev.includes(m.id) ? prev.filter((id) => id !== m.id) : [...prev, m.id]))
+                      }
+                      style={[
+                        styles.personChip,
+                        { backgroundColor: active ? m.color : theme.colors.fieldBg },
+                      ]}
+                    >
+                      <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: active ? '#fff' : theme.colors.ink }}>
+                        {m.name}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          )}
 
           <View style={{ flexDirection: 'row', gap: 10 }}>
             {onDelete && (
@@ -570,15 +1026,21 @@ function EventFormModal({
               </Pressable>
             )}
             <Pressable onPress={onClose} style={[styles.modalBtn, { backgroundColor: theme.colors.fieldBg }]}>
-              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: theme.colors.inkSoft }}>Cancel</Text>
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: theme.colors.inkSoft }}>
+                {readOnly ? 'Close' : 'Cancel'}
+              </Text>
             </Pressable>
-            <Pressable
-              disabled={!title.trim()}
-              onPress={() => onSave({ title: title.trim(), time: time.trim(), endTime: endTime.trim(), personIds })}
-              style={[styles.modalBtn, { backgroundColor: theme.colors.ink, opacity: title.trim() ? 1 : 0.4 }]}
-            >
-              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>Save</Text>
-            </Pressable>
+            {!readOnly && (
+              <Pressable
+                disabled={!title.trim()}
+                onPress={() =>
+                  onSave({ title: title.trim(), time: time.trim(), endTime: endTime.trim(), personIds, calendarId })
+                }
+                style={[styles.modalBtn, { backgroundColor: theme.colors.ink, opacity: title.trim() ? 1 : 0.4 }]}
+              >
+                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>Save</Text>
+              </Pressable>
+            )}
           </View>
         </View>
       </View>
@@ -612,6 +1074,7 @@ const styles = StyleSheet.create({
   modalCard: { width: 420, borderRadius: 24, padding: 22 },
   input: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10, fontSize: 14 },
   personChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999 },
+  swatch: { width: 26, height: 26, borderRadius: 13 },
   modalBtn: { flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 14 },
   // Day agenda view
   agendaScroll: { flex: 1, minHeight: 0 },

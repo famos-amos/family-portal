@@ -1,12 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as WebBrowser from 'expo-web-browser';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 import { useAppFonts } from './src/theme/useAppFonts';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { hydrateAllStores } from './src/store/useAppStore';
+
+// Required for expo-auth-session's OAuth flow: when the Google redirect lands
+// back in this window (a popup on web, the in-app browser on native), this
+// hands the result to the code that called promptAsync() and closes the
+// popup/browser. Without it, promptAsync() never resolves — the Settings
+// "Connect" button appears to do nothing and the sign-in response stays null.
+// Must run at module scope, before anything renders.
+WebBrowser.maybeCompleteAuthSession();
 
 function AppShell() {
   const fontsLoaded = useAppFonts();

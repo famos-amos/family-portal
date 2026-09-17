@@ -14,11 +14,13 @@ import {
   useVerseStore,
 } from '../../store/useAppStore';
 import { dailyChallenges, verses } from '../../data/seed';
+import { isEventCalendarEnabled } from '../../lib/calendarVisibility';
+import { eventCalendarColor } from '../../lib/calendarColors';
 import { addDays, buildMonthGrid, buildWeekGrid, dayOfWeek, dayOfYear, formatWeekTitle, todayIso } from '../../lib/date';
 import { CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ChoresIcon, MealIcon, QuestionIcon, StarIcon } from '../../components/icons';
 import { Avatar } from '../../components/Avatar';
 import { SegmentedControl } from '../../components/ui';
-import { WidgetSize } from '../../store/types';
+import { CalendarEvent, WidgetSize } from '../../store/types';
 
 const Row = ({ children }: { children: React.ReactNode }) => <View style={{ marginBottom: 10 }}>{children}</View>;
 
@@ -52,10 +54,20 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
   const [cursor, setCursor] = useState(new Date());
   const events = useCalendarStore((s) => s.events);
   const hidden = useSettingsStore((s) => s.hiddenPersonIds);
+  const google = useSettingsStore((s) => s.google);
+  const apple = useSettingsStore((s) => s.apple);
+  const subscribedCalendars = useSettingsStore((s) => s.subscribedCalendars);
+  const hiddenGoogleCalendarIds = useSettingsStore((s) => s.hiddenGoogleCalendarIds);
+  const googleCalendarColors = useSettingsStore((s) => s.googleCalendarColors);
   const family = useFamilyStore((s) => s.members);
 
   const grid = useMemo(() => buildMonthGrid(cursor.getFullYear(), cursor.getMonth()), [cursor.getFullYear(), cursor.getMonth()]);
-  const visibleEvents = events.filter((e) => e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id)));
+  const calToggles = { google, apple, subscribedCalendars, hiddenGoogleCalendarIds };
+  const visibleEvents = events.filter(
+    (e) =>
+      isEventCalendarEnabled(e, calToggles) &&
+      (e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id))),
+  );
   const days = view === 'month' ? grid : buildWeekGrid(cursor);
 
   // Render the grid as one flex row per week (7 × flex:1 cells) rather than a
@@ -66,7 +78,10 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
   const weeks: (typeof days)[] = [];
   for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
 
-  const personColor = (ids: string[]) => family.find((m) => m.id === ids[0])?.color ?? theme.colors.inkSoft;
+  const dotColor = (e: CalendarEvent) =>
+    family.find((m) => m.id === e.personIds[0])?.color ??
+    eventCalendarColor(e, google.calendars, googleCalendarColors) ??
+    theme.colors.inkSoft;
 
   // Prev/Next mean "a month" or "a week" depending on which sub-view is
   // active — mirrors the same browsable-cursor pattern used on the full
@@ -134,7 +149,7 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
                   {size !== 'sm' && (
                     <View style={styles.dotRow}>
                       {dayEvents.slice(0, 3).map((e) => (
-                        <View key={e.id} style={[styles.dot, { backgroundColor: personColor(e.personIds) }]} />
+                        <View key={e.id} style={[styles.dot, { backgroundColor: dotColor(e) }]} />
                       ))}
                     </View>
                   )}
@@ -166,12 +181,23 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
   const navigation = useNavigation<any>();
   const events = useCalendarStore((s) => s.events);
   const hidden = useSettingsStore((s) => s.hiddenPersonIds);
+  const google = useSettingsStore((s) => s.google);
+  const apple = useSettingsStore((s) => s.apple);
+  const subscribedCalendars = useSettingsStore((s) => s.subscribedCalendars);
+  const hiddenGoogleCalendarIds = useSettingsStore((s) => s.hiddenGoogleCalendarIds);
+  const googleCalendarColors = useSettingsStore((s) => s.googleCalendarColors);
   const family = useFamilyStore((s) => s.members);
   const today = todayIso();
   const openTodayInCalendar = () =>
     navigation.navigate('Calendar', { view: 'day', date: today, ts: Date.now() });
+  const calToggles = { google, apple, subscribedCalendars, hiddenGoogleCalendarIds };
   const todays = events
-    .filter((e) => e.date === today && (e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id))))
+    .filter(
+      (e) =>
+        e.date === today &&
+        isEventCalendarEnabled(e, calToggles) &&
+        (e.personIds.length === 0 || e.personIds.some((id) => !hidden.includes(id))),
+    )
     .sort((a, b) => (a.time ?? '').localeCompare(b.time ?? ''));
 
   const eventPeople = (ids: string[]) => family.filter((m) => ids.includes(m.id));
@@ -196,7 +222,13 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
               {(people.length ? people : [null]).slice(0, 3).map((p, i) => (
                 <View
                   key={p?.id ?? i}
-                  style={[styles.eventDot, { backgroundColor: p?.color ?? theme.colors.inkSoft }]}
+                  style={[
+                    styles.eventDot,
+                    {
+                      backgroundColor:
+                        p?.color ?? eventCalendarColor(e, google.calendars, googleCalendarColors) ?? theme.colors.inkSoft,
+                    },
+                  ]}
                 />
               ))}
             </View>

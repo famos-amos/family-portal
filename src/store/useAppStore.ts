@@ -21,9 +21,11 @@ import {
   CalendarEvent,
   Chore,
   FamilyMember,
+  GoogleCalendarSummary,
   Meal,
   MealSuggestion,
   Recipe,
+  SubscribedCalendar,
   ThemePreference,
   WidgetId,
   WidgetSize,
@@ -612,6 +614,8 @@ function eventFromRow(row: any): CalendarEvent {
     title: row.title,
     personIds: row.person_ids ?? [],
     source: row.source,
+    calendarId: row.calendar_id ?? undefined,
+    googleId: row.google_id ?? undefined,
   };
 }
 function eventToRow(id: string, e: Partial<Omit<CalendarEvent, 'id'>>) {
@@ -622,6 +626,11 @@ function eventToRow(id: string, e: Partial<Omit<CalendarEvent, 'id'>>) {
   if (e.title !== undefined) row.title = e.title;
   if (e.personIds !== undefined) row.person_ids = e.personIds;
   if (e.source !== undefined) row.source = e.source;
+  // Use `in` (not `!== undefined`) so an explicit `{ googleId: undefined }`
+  // patch — "this event is no longer on Google" — writes NULL rather than
+  // being skipped and leaving the stale id in the row.
+  if ('calendarId' in e) row.calendar_id = e.calendarId ?? null;
+  if ('googleId' in e) row.google_id = e.googleId ?? null;
   return row;
 }
 
@@ -629,10 +638,25 @@ type CalendarState = {
   events: CalendarEvent[];
   hydrated: boolean;
   hydrate: () => Promise<void>;
-  addEvent: (e: Omit<CalendarEvent, 'id' | 'source'>) => void;
+  addEvent: (e: Omit<CalendarEvent, 'id' | 'source'>) => CalendarEvent;
   updateEvent: (id: string, patch: Partial<Omit<CalendarEvent, 'id'>>) => void;
   removeEvent: (id: string) => void;
-  replaceSyncedEvents: (source: 'google' | 'apple', events: Omit<CalendarEvent, 'source'>[]) => void;
+  replaceSyncedEvents: (
+    source: 'google' | 'apple',
+    events: Omit<CalendarEvent, 'source'>[],
+    /** For Google: the `google:<id>` keys that were actually fetched this
+     * round. Existing Google events on *other* calendars are left alone (so a
+     * partial sync can't wipe events on calendars it didn't read). */
+    googleCalendarKeys?: string[],
+  ) => void;
+  /** Replace every event belonging to one subscribed public calendar with a
+   * freshly-fetched batch (called after re-reading its ICS feed). */
+  replaceSubscribedEvents: (
+    subId: string,
+    events: Pick<CalendarEvent, 'date' | 'time' | 'endTime' | 'title'>[],
+  ) => void;
+  /** Drop every event on a given calendar id — e.g. when a subscription is deleted. */
+  removeEventsForCalendar: (calendarId: string) => void;
 };
 
 let calendarSubscribed = false;
@@ -663,6 +687,7 @@ export const useCalendarStore = create<CalendarState>()((set, get) => ({
     const event: CalendarEvent = { ...e, id, source: 'local' };
     set((s) => ({ events: [...s.events, event] }));
     syncInsert('calendar_events', eventToRow(id, event));
+    return event;
   },
   updateEvent: (id, patch) => {
     set((s) => ({ events: s.events.map((e) => (e.id === id ? { ...e, ...patch } : e)) }));
@@ -672,16 +697,82 @@ export const useCalendarStore = create<CalendarState>()((set, get) => ({
     set((s) => ({ events: s.events.filter((e) => e.id !== id) }));
     syncDelete('calendar_events', id);
   },
-  // Swaps out all previously-synced events from one source with a fresh
-  // batch — called after a Google/Apple calendar sync round-trip.
-  replaceSyncedEvents: (source, events) => {
-    const stamped = events.map((e) => ({ ...e, source }));
+  // Swaps out all previously-synced events from one source with a fresh batch —
+  // called after a Google/Apple sync round-trip. For Google, incoming events
+  // are matched to any existing copy by `googleId` so app-only data on them
+  // (which family members an event involves, its target calendar) survives the
+  // round-trip that Google itself doesn't store.
+  replaceSyncedEvents: (source, events, googleCalendarKeys) => {
+    let finalEvents: CalendarEvent[];
+    // Google events on calendars we didn't fetch this round are carried over
+    // untouched (both in local state and left alone in Supabase).
+    let carriedOver: CalendarEvent[] = [];
+    const scope = source === 'google' && googleCalendarKeys ? new Set(googleCalendarKeys) : null;
+    const inScope = (e: CalendarEvent) => {
+      if (e.source !== source) return false;
+      if (!scope) return true;
+      const key = e.calendarId === 'google' ? 'google:primary' : e.calendarId ?? 'google:primary';
+      return scope.has(key);
+    };
+
+    if (source === 'google') {
+      carriedOver = get().events.filter((e) => e.source === 'google' && !inScope(e));
+      const prevByGid = new Map(
+        get().events.filter((e) => e.googleId).map((e) => [e.googleId as string, e]),
+      );
+      finalEvents = events.map((ev) => {
+        const prev = ev.googleId ? prevByGid.get(ev.googleId) : undefined;
+        return {
+          id: prev?.id ?? ev.id ?? makeId(),
+          date: ev.date,
+          time: ev.time,
+          endTime: ev.endTime,
+          title: ev.title,
+          personIds: prev?.personIds ?? [],
+          source: 'google',
+          calendarId: ev.calendarId ?? prev?.calendarId ?? 'google:primary',
+          googleId: ev.googleId,
+        } as CalendarEvent;
+      });
+    } else {
+      finalEvents = events.map((e) => ({ ...e, source }) as CalendarEvent);
+    }
+
     set((s) => ({
-      events: [...s.events.filter((e) => e.source !== source), ...stamped],
+      events: [...s.events.filter((e) => e.source !== source), ...carriedOver, ...finalEvents],
     }));
     if (isSupabaseConfigured) {
       (async () => {
         const { error: delErr } = await supabase.from('calendar_events').delete().eq('source', source);
+        if (delErr) logSyncError('delete (pre-sync)', 'calendar_events', delErr);
+        // Re-write the fetched batch plus any Google events on calendars this
+        // round didn't touch, so a partial sync doesn't drop them from the DB.
+        const rows = [...carriedOver, ...finalEvents];
+        if (rows.length) {
+          const { error: insErr } = await supabase
+            .from('calendar_events')
+            .insert(rows.map((e) => eventToRow(e.id, e)));
+          if (insErr) logSyncError('bulk insert', 'calendar_events', insErr);
+        }
+      })();
+    }
+  },
+  replaceSubscribedEvents: (subId, events) => {
+    const key = `sub:${subId}` as const;
+    const stamped: CalendarEvent[] = events.map((e) => ({
+      id: makeId(),
+      date: e.date,
+      time: e.time,
+      endTime: e.endTime,
+      title: e.title,
+      personIds: [],
+      source: 'subscription',
+      calendarId: key,
+    }));
+    set((s) => ({ events: [...s.events.filter((e) => e.calendarId !== key), ...stamped] }));
+    if (isSupabaseConfigured) {
+      (async () => {
+        const { error: delErr } = await supabase.from('calendar_events').delete().eq('calendar_id', key);
         if (delErr) logSyncError('delete (pre-sync)', 'calendar_events', delErr);
         if (stamped.length) {
           const { error: insErr } = await supabase
@@ -689,6 +780,15 @@ export const useCalendarStore = create<CalendarState>()((set, get) => ({
             .insert(stamped.map((e) => eventToRow(e.id, e)));
           if (insErr) logSyncError('bulk insert', 'calendar_events', insErr);
         }
+      })();
+    }
+  },
+  removeEventsForCalendar: (calendarId) => {
+    set((s) => ({ events: s.events.filter((e) => e.calendarId !== calendarId) }));
+    if (isSupabaseConfigured) {
+      (async () => {
+        const { error } = await supabase.from('calendar_events').delete().eq('calendar_id', calendarId);
+        if (error) logSyncError('delete', 'calendar_events', error);
       })();
     }
   },
@@ -924,14 +1024,59 @@ type SettingsState = {
   hiddenPersonIds: string[];
   togglePersonVisibility: (personId: string) => void;
 
+  /** Google calendar ids (not the `google:` prefixed CalendarId — the raw
+   * calendarList id) currently hidden from view, independent of the master
+   * Google on/off switch. Lets you show Personal but hide Work, say. */
+  hiddenGoogleCalendarIds: string[];
+  toggleGoogleCalendarVisibility: (googleCalId: string) => void;
+
+  /** User-chosen event color per Google calendar id, overriding whatever
+   * color Google itself reports for that calendar. Kept separate from
+   * `google.calendars` (which is overwritten wholesale on every sync) so a
+   * customization survives re-fetching the calendar list. */
+  googleCalendarColors: Record<string, string>;
+  setGoogleCalendarColor: (googleCalId: string, color: string) => void;
+  resetGoogleCalendarColor: (googleCalId: string) => void;
+
   notifications: { chores: boolean; events: boolean; daily: boolean };
   setNotification: (key: 'chores' | 'events' | 'daily', value: boolean) => void;
 
-  google: { connected: boolean; email?: string };
-  setGoogleConnection: (connected: boolean, email?: string) => void;
+  // Google OAuth state. The `refreshToken` is what makes offline 2-way sync
+  // possible — it lets the app mint a new short-lived `accessToken` (valid
+  // until `expiresAt`, epoch ms) without another interactive sign-in. It's
+  // persisted here in AsyncStorage alongside the other device-local settings;
+  // that's consistent with this app's existing posture (no per-user login,
+  // anon Supabase key in the bundle — see README security note), though
+  // moving it to expo-secure-store would be a reasonable hardening step.
+  google: {
+    connected: boolean;
+    /** When false, Google events are hidden and no local change is pushed to
+     * Google. Undefined counts as on. */
+    enabled?: boolean;
+    email?: string;
+    refreshToken?: string;
+    accessToken?: string;
+    expiresAt?: number;
+    /** The account's calendars (from calendarList), refreshed on connect /
+     * Sync Now. Drives the "which Google calendar" picker in the event form. */
+    calendars?: GoogleCalendarSummary[];
+  };
+  setGoogleAuth: (patch: Partial<SettingsState['google']>) => void;
+  disconnectGoogle: () => void;
 
-  apple: { connected: boolean; appleId?: string };
+  apple: { connected: boolean; enabled?: boolean; appleId?: string };
   setAppleConnection: (connected: boolean, appleId?: string) => void;
+  setAppleEnabled: (enabled: boolean) => void;
+
+  // Public calendars followed by ICS/webcal URL — view-only, device-local
+  // (their *events* are shared via the calendar_events table like everything
+  // else; only the list of feeds is per-device, same as the Google/Apple
+  // connections).
+  subscribedCalendars: SubscribedCalendar[];
+  addSubscribedCalendar: (c: Omit<SubscribedCalendar, 'id' | 'enabled'>) => SubscribedCalendar;
+  updateSubscribedCalendar: (id: string, patch: Partial<Omit<SubscribedCalendar, 'id'>>) => void;
+  toggleSubscribedCalendar: (id: string) => void;
+  removeSubscribedCalendar: (id: string) => void;
 };
 
 export const useSettingsStore = create<SettingsState>()(
@@ -948,15 +1093,55 @@ export const useSettingsStore = create<SettingsState>()(
             : [...s.hiddenPersonIds, personId],
         })),
 
+      hiddenGoogleCalendarIds: [],
+      toggleGoogleCalendarVisibility: (googleCalId) =>
+        set((s) => ({
+          hiddenGoogleCalendarIds: s.hiddenGoogleCalendarIds.includes(googleCalId)
+            ? s.hiddenGoogleCalendarIds.filter((id) => id !== googleCalId)
+            : [...s.hiddenGoogleCalendarIds, googleCalId],
+        })),
+
+      googleCalendarColors: {},
+      setGoogleCalendarColor: (googleCalId, color) =>
+        set((s) => ({ googleCalendarColors: { ...s.googleCalendarColors, [googleCalId]: color } })),
+      resetGoogleCalendarColor: (googleCalId) =>
+        set((s) => {
+          const next = { ...s.googleCalendarColors };
+          delete next[googleCalId];
+          return { googleCalendarColors: next };
+        }),
+
       notifications: { chores: true, events: true, daily: false },
       setNotification: (key, value) =>
         set((s) => ({ notifications: { ...s.notifications, [key]: value } })),
 
       google: { connected: false },
-      setGoogleConnection: (connected, email) => set({ google: { connected, email } }),
+      setGoogleAuth: (patch) => set((s) => ({ google: { ...s.google, ...patch } })),
+      disconnectGoogle: () => set({ google: { connected: false } }),
 
       apple: { connected: false },
-      setAppleConnection: (connected, appleId) => set({ apple: { connected, appleId } }),
+      setAppleConnection: (connected, appleId) =>
+        set((s) => ({ apple: { ...s.apple, connected, appleId } })),
+      setAppleEnabled: (enabled) => set((s) => ({ apple: { ...s.apple, enabled } })),
+
+      subscribedCalendars: [],
+      addSubscribedCalendar: (c) => {
+        const cal: SubscribedCalendar = { ...c, id: makeId(), enabled: true };
+        set((s) => ({ subscribedCalendars: [...s.subscribedCalendars, cal] }));
+        return cal;
+      },
+      updateSubscribedCalendar: (id, patch) =>
+        set((s) => ({
+          subscribedCalendars: s.subscribedCalendars.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+        })),
+      toggleSubscribedCalendar: (id) =>
+        set((s) => ({
+          subscribedCalendars: s.subscribedCalendars.map((c) =>
+            c.id === id ? { ...c, enabled: !c.enabled } : c,
+          ),
+        })),
+      removeSubscribedCalendar: (id) =>
+        set((s) => ({ subscribedCalendars: s.subscribedCalendars.filter((c) => c.id !== id) })),
     }),
     { name: 'roost.settings', storage },
   ),

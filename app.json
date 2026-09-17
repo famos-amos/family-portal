@@ -34,9 +34,13 @@
       "baseUrl": "/family-portal"
     },
     "extra": {
-      "googleOAuthClientIdAndroid": "REPLACE_WITH_GOOGLE_ANDROID_CLIENT_ID",
-      "googleOAuthClientIdIos": "REPLACE_WITH_GOOGLE_IOS_CLIENT_ID",
-      "googleOAuthClientIdWeb": "REPLACE_WITH_GOOGLE_WEB_CLIENT_ID"
-    }
+      "googleOAuthClientIdAndroid": "1087417379912-n9uju75j3t1qo6rb4u52n3ffthgd21ua.apps.googleusercontent.com",
+      "googleOAuthClientIdIos": "1087417379912-5hp7a1j8a4jdarp2eeo9kjlfd7qokn1u.apps.googleusercontent.com",
+      "googleOAuthClientIdWeb": "1087417379912-r916hk7onvur1gs70feavqb6d8spmknd.apps.googleusercontent.com",
+      "eas": {
+        "projectId": "9c800daa-9070-4e87-8184-13dae38fbbcd"
+      }
+    },
+    "owner": "famos-amos"
   }
 }
