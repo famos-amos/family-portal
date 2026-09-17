@@ -7,7 +7,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 import { useAppFonts } from './src/theme/useAppFonts';
 import { RootNavigator } from './src/navigation/RootNavigator';
-import { hydrateAllStores } from './src/store/useAppStore';
+import { hydrateAllStores, useAppLockStore } from './src/store/useAppStore';
+import { LockScreen } from './src/screens/LockScreen';
 
 // Required for expo-auth-session's OAuth flow: when the Google redirect lands
 // back in this window (a popup on web, the in-app browser on native), this
@@ -21,6 +22,8 @@ function AppShell() {
   const fontsLoaded = useAppFonts();
   const [dataReady, setDataReady] = useState(false);
   const theme = useTheme();
+  const pinHash = useAppLockStore((s) => s.pinHash);
+  const unlocked = useAppLockStore((s) => s.unlocked);
 
   useEffect(() => {
     // Fire once at launch: pulls the family's data down from Supabase (or,
@@ -65,9 +68,17 @@ function AppShell() {
     );
   }
 
+  // A PIN configured (Settings → App Lock) and this device not yet unlocked
+  // for it → show the lock screen instead of the app. `unlocked` is
+  // persisted per device (see useAppLockStore), so a device that's entered
+  // the PIN before skips straight to the app; a new device/browser — or
+  // anyone without the PIN — always starts locked. No PIN configured at all
+  // means no gate.
+  const locked = !!pinHash && !unlocked;
+
   return (
     <>
-      <RootNavigator />
+      {locked ? <LockScreen /> : <RootNavigator />}
       <StatusBar style={theme.isDark ? 'light' : 'dark'} />
     </>
   );

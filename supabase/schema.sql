@@ -113,6 +113,15 @@ create table if not exists meal_suggestions (
   slot              text      -- 'breakfast' | 'lunch' | 'dinner', nullable — see note on day above
 );
 
+-- A single shared PIN gating the whole app (Settings → App Lock). Always at
+-- most one row, id 'main'. No row = no PIN configured = the app opens with no
+-- gate, so a fresh install isn't locked out of Settings before anyone has had
+-- the chance to set one. Only a SHA-256 hash is stored, never the raw PIN.
+create table if not exists app_lock (
+  id       text primary key,
+  pin_hash text not null
+);
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security — open to the app's anon key (see note above)
 -- ---------------------------------------------------------------------------
@@ -125,12 +134,13 @@ alter table board_items     enable row level security;
 alter table calendar_events enable row level security;
 alter table recipes         enable row level security;
 alter table meal_suggestions enable row level security;
+alter table app_lock        enable row level security;
 
 do $$
 declare
   t text;
 begin
-  foreach t in array array['family_members','chores','meals','board_columns','board_items','calendar_events','recipes','meal_suggestions']
+  foreach t in array array['family_members','chores','meals','board_columns','board_items','calendar_events','recipes','meal_suggestions','app_lock']
   loop
     execute format('drop policy if exists "allow all to anon" on %I;', t);
     execute format(
@@ -155,6 +165,7 @@ alter publication supabase_realtime add table board_items;
 alter publication supabase_realtime add table calendar_events;
 alter publication supabase_realtime add table recipes;
 alter publication supabase_realtime add table meal_suggestions;
+alter publication supabase_realtime add table app_lock;
 
 -- ---------------------------------------------------------------------------
 -- Starter data — same starter family/chores/meals/boards the app used to

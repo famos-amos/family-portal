@@ -989,6 +989,97 @@ export const useVerseStore = create<VerseState>()(
 );
 
 // ---------------------------------------------------------------------------
+// App lock — one PIN, shared by everyone (Settings → App Lock), gating the
+// whole app. Only its SHA-256 hash lives in Supabase (`app_lock`, single row
+// id 'main') — see src/lib/pin.ts. `unlocked` is per-device and persisted
+// locally: enter the PIN once on a device/browser and it stays open there
+// (App.tsx re-locks it only if `lock()` is called there, or someone changes
+// the PIN elsewhere). A brand-new device/browser — or an attacker who
+// doesn't have the PIN — always starts with `unlocked: false` and has to
+// clear the lock screen first; there's no bypassing it without the shared
+// PIN. No row in the table at all means no PIN is configured, so App.tsx
+// shows the app with no gate — that's what lets a fresh install reach
+// Settings to set one in the first place.
+// ---------------------------------------------------------------------------
+const APP_LOCK_ROW_ID = 'main';
+let appLockSubscribed = false;
+
+type AppLockState = {
+  /** SHA-256 hash of the configured PIN, or null if none is set. */
+  pinHash: string | null;
+  hydrated: boolean;
+  /** Whether *this device* has already unlocked. Persisted. */
+  unlocked: boolean;
+  hydrate: () => Promise<void>;
+  setPin: (hash: string) => Promise<void>;
+  clearPin: () => Promise<void>;
+  /** Records that this device is now unlocked (call after verifying the PIN
+   * yourself — this store doesn't hash/compare, see src/lib/pin.ts). */
+  unlock: () => void;
+  lock: () => void;
+};
+
+export const useAppLockStore = create<AppLockState>()(
+  persist(
+    (set) => ({
+      pinHash: null,
+      hydrated: false,
+      unlocked: false,
+      hydrate: async () => {
+        // This device's persisted `unlocked` flag must actually be loaded
+        // from AsyncStorage before App.tsx decides whether to show the lock
+        // screen — otherwise a previously-unlocked device could flash the
+        // lock screen for a moment (or, worse, get judged "locked" if this
+        // resolves after `dataReady` flips) while that read is still async.
+        if (!useAppLockStore.persist.hasHydrated()) {
+          await new Promise<void>((resolve) => {
+            const unsub = useAppLockStore.persist.onFinishHydration(() => {
+              unsub();
+              resolve();
+            });
+          });
+        }
+        const { ok, rows } = await fetchTable('app_lock');
+        if (ok) set({ pinHash: rows.find((r) => r.id === APP_LOCK_ROW_ID)?.pin_hash ?? null });
+        set({ hydrated: true });
+        if (!appLockSubscribed) {
+          appLockSubscribed = true;
+          subscribeRealtime(
+            'app_lock',
+            (row) => {
+              if (row.id === APP_LOCK_ROW_ID) set({ pinHash: row.pin_hash ?? null });
+            },
+            (id) => {
+              if (id === APP_LOCK_ROW_ID) set({ pinHash: null });
+            },
+          );
+        }
+      },
+      setPin: async (hash) => {
+        set({ pinHash: hash, unlocked: true });
+        if (isSupabaseConfigured) {
+          const { error } = await supabase.from('app_lock').upsert({ id: APP_LOCK_ROW_ID, pin_hash: hash });
+          if (error) logSyncError('upsert', 'app_lock', error);
+        }
+      },
+      clearPin: async () => {
+        set({ pinHash: null });
+        syncDelete('app_lock', APP_LOCK_ROW_ID);
+      },
+      unlock: () => set({ unlocked: true }),
+      lock: () => set({ unlocked: false }),
+    }),
+    {
+      name: 'roost.appLock',
+      storage,
+      // `hydrated` is meaningless across a reload — always re-fetched at
+      // startup — so it's left out on purpose.
+      partialize: (s) => ({ pinHash: s.pinHash, unlocked: s.unlocked }),
+    },
+  ),
+);
+
+// ---------------------------------------------------------------------------
 // Bootstrap — call once from App.tsx before rendering the rest of the app.
 // ---------------------------------------------------------------------------
 export async function hydrateAllStores(): Promise<void> {
@@ -1000,6 +1091,7 @@ export async function hydrateAllStores(): Promise<void> {
     useCalendarStore.getState().hydrate(),
     useRecipesStore.getState().hydrate(),
     useSuggestionsStore.getState().hydrate(),
+    useAppLockStore.getState().hydrate(),
   ]);
   // These two are deliberately NOT awaited above: the verse fetch is a
   // "nice to have" (VerseWidgetContent already shows a local fallback verse

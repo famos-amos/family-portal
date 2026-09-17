@@ -94,8 +94,9 @@ dashboard and takes about 5 minutes.
 2. **Run the schema.** In the project's left sidebar go to **SQL Editor →
    New query**, then open this repo's `supabase/schema.sql`, copy its
    entire contents, paste into the editor, and click **Run**. This creates
-   all eight tables the app needs (family members, chores, meals, board
-   columns/items, calendar events, recipes, meal suggestions), turns on Row
+   all nine tables the app needs (family members, chores, meals, board
+   columns/items, calendar events, recipes, meal suggestions, the app-lock
+   PIN), turns on Row
    Level Security with policies that allow the app's key to read/write them,
    turns on realtime sync for each table, and inserts the same starter
    family/chores/meals/recipes the app used to ship with locally — so it
@@ -363,6 +364,31 @@ than oversight:
   own browser chrome and orientation apply, so keep the tablet propped in
   landscape as intended.
 
+## App Lock (PIN)
+
+Settings → **App Lock** lets you require a 4-digit PIN to open Family Portal.
+It's one shared PIN for the whole household — only its SHA-256 hash is
+stored (`app_lock` table in Supabase, a single row), never the PIN itself.
+Unlocking is per-device and sticky: enter it once on a tablet/browser and
+that device stays unlocked until someone taps **Lock this device** in
+Settings there. A device, browser, or person that has never entered it —
+including an attacker with no other way in — always hits the lock screen
+first. **Remove PIN** opens the app to everyone with no gate at all; changing
+the PIN to a new value doesn't retroactively re-lock devices that were
+already unlocked (use **Lock this device** on each one if you want that).
+
+No PIN configured (a fresh install, or after **Remove PIN**) means the app
+opens with no gate at all — that's what lets a new install reach Settings to
+set one in the first place. Run `supabase/migrate_v6.sql` once if your
+project predates this (adds just the `app_lock` table; `schema.sql` already
+includes it for fresh installs).
+
+This is a soft gate, not real authentication — consistent with the rest of
+the app's security posture (see the note under "Setting up Supabase"): a
+4-digit PIN is only 10,000 combinations, and the hash sits in a table the
+anon key can read. It stops casual/accidental access, not a determined
+attacker.
+
 ## Project structure
 
 ```
@@ -373,17 +399,23 @@ src/
   data/          Seed/demo data — recipes.ts, and seed.ts (the Supabase
                  fallback data + the local Daily Challenge / verse rotations)
   lib/           date helpers, id generation, Google + Apple calendar clients,
-                 the Supabase client, verse feed client, meal-assignment helper,
-                 layout/breakpoint helpers, cross-platform alert/confirm
+                 subscribed-calendar (ICS) parsing, calendar color/visibility
+                 helpers, PIN hashing (pin.ts), the Supabase client, verse
+                 feed client, meal-assignment helper, layout/breakpoint
+                 helpers, cross-platform alert/confirm
   navigation/    React Navigation route param types + the root stack navigator
   screens/       One file per screen (Home, Calendar, Chores, MealPlans,
-                 Boards, Recipes, GroceryList, Suggestions, Settings);
-                 screens/home/ holds the dashboard widgets + WidgetShell
+                 Boards, Recipes, GroceryList, Suggestions, Settings) plus
+                 LockScreen (the App Lock PIN gate, shown by App.tsx itself —
+                 not part of the navigator); screens/home/ holds the
+                 dashboard widgets + WidgetShell
   store/         Zustand stores (one per domain). family / chores / meals /
                  meal-suggestions / recipes / boards / calendar sync to
                  Supabase (see useAppStore.ts); verse cache, settings,
-                 daily-challenge votes and dashboard layout stay in
-                 AsyncStorage as device-local state
+                 daily-challenge votes, dashboard layout and the App Lock PIN
+                 hash + this device's unlocked flag stay in AsyncStorage as
+                 device-local state (the PIN hash is also mirrored to
+                 Supabase so every device checks against the same PIN)
   theme/         Colors, typography, ThemeProvider (light/dark), font loading
 supabase/
   schema.sql     Run once in your Supabase project's SQL Editor — see

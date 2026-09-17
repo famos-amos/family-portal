@@ -14,7 +14,8 @@ import { Avatar } from '../components/Avatar';
 import { useTheme } from '../theme/ThemeProvider';
 import { PrimaryButton, SegmentedControl, Switch } from '../components/ui';
 import { EditIcon, PlusIcon, TrashIcon } from '../components/icons';
-import { useFamilyStore, useCalendarStore, useSettingsStore } from '../store/useAppStore';
+import { useFamilyStore, useCalendarStore, useSettingsStore, useAppLockStore } from '../store/useAppStore';
+import { hashPin, isValidPin, PIN_LENGTH } from '../lib/pin';
 import { personColorOptions } from '../theme/colors';
 import { FamilyMember, ThemePreference } from '../store/types';
 import { confirmAction, notify } from '../lib/alerts';
@@ -40,13 +41,14 @@ import {
   toggleSubscribedCalendarWithRefresh,
 } from '../lib/icsCalendar';
 
-type SectionId = 'family' | 'appearance' | 'calendars' | 'notifications' | 'about';
+type SectionId = 'family' | 'appearance' | 'calendars' | 'notifications' | 'security' | 'about';
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'family', label: 'Family Members' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'calendars', label: 'Connected Calendars' },
   { id: 'notifications', label: 'Notifications' },
+  { id: 'security', label: 'App Lock' },
   { id: 'about', label: 'About' },
 ];
 
@@ -96,6 +98,7 @@ export function SettingsScreen() {
           {section === 'appearance' && <AppearanceSection />}
           {section === 'calendars' && <ConnectedCalendarsSection />}
           {section === 'notifications' && <NotificationsSection />}
+          {section === 'security' && <AppLockSection />}
           {section === 'about' && <AboutSection />}
         </ScrollView>
       </View>
@@ -702,6 +705,122 @@ function NotificationsSection() {
           <Switch value={notifications[r.key]} onValueChange={(v) => setNotification(r.key, v)} />
         </View>
       ))}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// App Lock — a single shared PIN, stored (hashed) in Supabase, required to
+// open the app. See src/lib/pin.ts and useAppLockStore in useAppStore.ts.
+// ---------------------------------------------------------------------------
+function AppLockSection() {
+  const theme = useTheme();
+  const pinHash = useAppLockStore((s) => s.pinHash);
+  const setPin = useAppLockStore((s) => s.setPin);
+  const clearPin = useAppLockStore((s) => s.clearPin);
+  const lock = useAppLockStore((s) => s.lock);
+
+  const [pin1, setPin1] = useState('');
+  const [pin2, setPin2] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const digitsOnly = (v: string) => v.replace(/\D/g, '').slice(0, PIN_LENGTH);
+
+  const save = async () => {
+    if (!isValidPin(pin1)) {
+      notify('Invalid PIN', `Enter a ${PIN_LENGTH}-digit PIN.`);
+      return;
+    }
+    if (pin1 !== pin2) {
+      notify("PINs don't match", 'Re-enter the same PIN in both boxes.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await setPin(await hashPin(pin1));
+      setPin1('');
+      setPin2('');
+      notify(
+        pinHash ? 'PIN updated' : 'PIN set',
+        'This device stays unlocked. Other devices (or anyone without the PIN) will be asked for it the next time they open the app.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = () => {
+    confirmAction(
+      'Remove the PIN?',
+      'Anyone who opens this app — on any device — will get straight in with no PIN.',
+      'Remove',
+      async () => {
+        await clearPin();
+        notify('PIN removed', 'The portal no longer requires a PIN.');
+      },
+      { destructive: true },
+    );
+  };
+
+  return (
+    <View>
+      <Text style={[styles.h1, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>App Lock</Text>
+      <Text style={[styles.sub, { fontFamily: theme.fonts.body, color: theme.colors.inkSoft }]}>
+        Require a {PIN_LENGTH}-digit PIN to open Family Portal. One PIN, shared by everyone — only its hash
+        is stored in Supabase, never the PIN itself. A device that's entered it stays unlocked; a brand-new
+        device, browser, or anyone without the PIN always has to clear the lock screen first.
+      </Text>
+
+      <View style={[styles.calendarCard, { backgroundColor: theme.colors.fieldBg }]}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 15, color: theme.colors.ink }}>
+            {pinHash ? 'A PIN is set' : 'No PIN set'}
+          </Text>
+          <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft, marginTop: 2 }}>
+            {pinHash
+              ? 'This device is unlocked. Locking it will show the PIN screen next.'
+              : 'Anyone who opens the app gets straight in.'}
+          </Text>
+        </View>
+        {pinHash && <PrimaryButton label="Lock this device" color={theme.colors.danger} onPress={lock} />}
+      </View>
+
+      <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 13, color: theme.colors.ink, marginTop: 8, marginBottom: 8 }}>
+        {pinHash ? 'Change PIN' : 'Set a PIN'}
+      </Text>
+      <TextInput
+        value={pin1}
+        onChangeText={(v) => setPin1(digitsOnly(v))}
+        placeholder={`New ${PIN_LENGTH}-digit PIN`}
+        placeholderTextColor={theme.colors.inkSoft}
+        keyboardType="number-pad"
+        secureTextEntry
+        maxLength={PIN_LENGTH}
+        style={[styles.input, { backgroundColor: theme.colors.panel, color: theme.colors.ink }]}
+      />
+      <TextInput
+        value={pin2}
+        onChangeText={(v) => setPin2(digitsOnly(v))}
+        placeholder="Confirm PIN"
+        placeholderTextColor={theme.colors.inkSoft}
+        keyboardType="number-pad"
+        secureTextEntry
+        maxLength={PIN_LENGTH}
+        style={[styles.input, { backgroundColor: theme.colors.panel, color: theme.colors.ink }]}
+      />
+      <PrimaryButton
+        label={busy ? 'Saving…' : pinHash ? 'Update PIN' : 'Set PIN'}
+        color={theme.colors.ink}
+        onPress={save}
+      />
+
+      {pinHash && (
+        <Pressable onPress={remove} style={{ marginTop: 14 }} hitSlop={6}>
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.danger }}>
+            Remove PIN
+          </Text>
+        </Pressable>
+      )}
     </View>
   );
 }
