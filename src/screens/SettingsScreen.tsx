@@ -264,7 +264,7 @@ function AppearanceSection() {
     <View>
       <Text style={[styles.h1, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>Appearance</Text>
       <Text style={[styles.sub, { fontFamily: theme.fonts.body, color: theme.colors.inkSoft }]}>
-        Choose how Roost looks on this tablet.
+        Choose how Huddle looks on this tablet.
       </Text>
       <View style={{ maxWidth: 420, marginTop: 6 }}>
         <SegmentedControl<ThemePreference>
@@ -503,7 +503,7 @@ function ConnectedCalendarsSection() {
     <View>
       <Text style={[styles.h1, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>Connected Calendars</Text>
       <Text style={[styles.sub, { fontFamily: theme.fonts.body, color: theme.colors.inkSoft }]}>
-        Two-way sync keeps Roost's calendar and your family's Google/Apple calendars matching. Public
+        Two-way sync keeps Huddle's calendar and your family's Google/Apple calendars matching. Public
         calendars can be followed by link (view only).
       </Text>
 
@@ -832,9 +832,9 @@ function AboutSection() {
   const theme = useTheme();
   return (
     <View>
-      <Text style={[styles.h1, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>About Roost</Text>
+      <Text style={[styles.h1, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>About Huddle</Text>
       <Text style={[styles.sub, { fontFamily: theme.fonts.body, color: theme.colors.inkSoft }]}>
-        Roost is a shared family dashboard for a wall-mounted tablet: calendar, chores, meal plans and family
+        Huddle is a shared family dashboard for a wall-mounted tablet: calendar, chores, meal plans and family
         boards in one warm, playful home screen.
       </Text>
       <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft, marginTop: 10 }}>

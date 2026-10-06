@@ -573,6 +573,7 @@ function ProgressRing({
 // ---------------------------------------------------------------------------
 export function ChoresWidgetContent() {
   const theme = useTheme();
+  const navigation = useNavigation<any>();
   const chores = useChoresStore((s) => s.chores);
   const family = useFamilyStore((s) => s.members);
 
@@ -590,30 +591,33 @@ export function ChoresWidgetContent() {
     .filter((x) => x.total > 0);
 
   return (
-    <View style={{ flexDirection: 'row', gap: 18 }}>
-      {withChores.map(({ member, total, done, stars }) => (
-        <View key={member.id} style={{ flex: 1, alignItems: 'center', gap: 6 }}>
-          <Text style={{ fontFamily: theme.fonts.head, fontSize: 13, color: member.color }}>{member.name}</Text>
-          <ProgressRing
-            size={60}
-            stroke={7}
-            progress={total ? done / total : 0}
-            trackColor={theme.isDark ? '#FFFFFF20' : '#FFFFFFB0'}
-            color={member.color}
-          >
-            <Text style={{ fontFamily: theme.fonts.head, fontSize: 12, color: theme.colors.ink }}>
-              {done}/{total}
-            </Text>
-          </ProgressRing>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-            <StarIcon size={11} color={theme.colors.star} />
-            <Text style={{ fontSize: 10.5, fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }}>
-              {stars} stars earned
-            </Text>
+    <Pressable onPress={() => navigation.navigate('Chores')} style={{ flex: 1 }}>
+      <SectionTitle icon={<ChoresIcon size={17} color={theme.colors.ink} />}>Chores</SectionTitle>
+      <View style={{ flexDirection: 'row', gap: 18 }}>
+        {withChores.map(({ member, total, done, stars }) => (
+          <View key={member.id} style={{ flex: 1, alignItems: 'center', gap: 6 }}>
+            <Text style={{ fontFamily: theme.fonts.head, fontSize: 13, color: member.color }}>{member.name}</Text>
+            <ProgressRing
+              size={60}
+              stroke={7}
+              progress={total ? done / total : 0}
+              trackColor={theme.isDark ? '#FFFFFF20' : '#FFFFFFB0'}
+              color={member.color}
+            >
+              <Text style={{ fontFamily: theme.fonts.head, fontSize: 12, color: theme.colors.ink }}>
+                {done}/{total}
+              </Text>
+            </ProgressRing>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              <StarIcon size={11} color={theme.colors.star} />
+              <Text style={{ fontSize: 10.5, fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }}>
+                {stars} stars earned
+              </Text>
+            </View>
           </View>
-        </View>
-      ))}
-    </View>
+        ))}
+      </View>
+    </Pressable>
   );
 }
 

@@ -3,10 +3,8 @@ import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } fr
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../theme/ThemeProvider';
-import { useFamilyStore } from '../store/useAppStore';
 import { RootStackParamList } from '../navigation/types';
 import { NARROW_BREAKPOINT } from '../lib/layout';
-import { Avatar } from './Avatar';
 import {
   BoardsIcon,
   CalendarIcon,
@@ -30,7 +28,6 @@ export function TopBar() {
   const theme = useTheme();
   const navigation = useNavigation<Nav>();
   const route = useRoute();
-  const members = useFamilyStore((s) => s.members);
   const { width } = useWindowDimensions();
   const narrow = width < NARROW_BREAKPOINT;
 
@@ -63,15 +60,7 @@ export function TopBar() {
   const brand = (
     <View style={styles.brand}>
       <View style={styles.brandDot} />
-      <Text style={[styles.brandName, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>Roost</Text>
-    </View>
-  );
-
-  const avatars = (
-    <View style={styles.avatars}>
-      {members.map((m, i) => (
-        <Avatar key={m.id} initials={m.initials} color={m.color} size={34} style={{ marginLeft: i === 0 ? 0 : -8 }} />
-      ))}
+      <Text style={[styles.brandName, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>Huddle</Text>
     </View>
   );
 
@@ -89,17 +78,16 @@ export function TopBar() {
     </Pressable>
   );
 
-  // Phone / narrow window: brand + 5 tab pills + avatars + settings can't
-  // share one row, so the tab row wraps into a vertical stack. Split it into
-  // two rows instead — identity/avatars on top, tabs on their own row,
-  // scrolling horizontally so they stay a single strip.
+  // Phone / narrow window: brand + 5 tab pills + settings can't share one
+  // row, so the tab row wraps into a vertical stack. Split it into
+  // two rows instead — identity on top, tabs on their own row, scrolling
+  // horizontally so they stay a single strip.
   if (narrow) {
     return (
       <View style={[styles.bar, styles.barNarrow, { backgroundColor: theme.colors.bg }]}>
         <View style={styles.narrowTopRow}>
           {brand}
           <View style={{ flex: 1 }} />
-          {avatars}
           {settingsBtn}
         </View>
         <ScrollView
@@ -117,7 +105,6 @@ export function TopBar() {
     <View style={[styles.bar, { backgroundColor: theme.colors.bg }]}>
       {brand}
       <View style={styles.tabs}>{TABS.map(renderTab)}</View>
-      {avatars}
       {settingsBtn}
     </View>
   );
@@ -150,7 +137,6 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   tabLabel: { fontSize: 13 },
-  avatars: { flexDirection: 'row', marginLeft: 4 },
   settingsBtn: {
     width: 32,
     height: 32,
