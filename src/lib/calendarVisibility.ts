@@ -17,15 +17,26 @@ export type CalendarToggles = {
  * subscribed-calendar toggles (both the master switches in Settings and the
  * per-Google-calendar chips on the Calendar screen).
  *
+ * Deliberately does NOT require *this device* to be connected
+ * (`google.connected` / `apple.connected`): events already pulled into the
+ * shared Supabase table are real data for the whole household, not just the
+ * one device that happened to run the OAuth flow. Requiring every device to
+ * independently connect before it could even *see* already-synced events was
+ * a bug — it made a shared calendar disappear on every device except the one
+ * that originally connected it. `connected` still gates whether *new* writes
+ * get pushed (see googleCalendar.ts's `googleWritable()`) and whether the
+ * Calendar screen offers Google calendars as a target for new events — just
+ * not whether already-synced events are visible.
+ *
  * `enabled` is treated as on when undefined (older stored state).
  */
 export function isEventCalendarEnabled(e: CalendarEvent, t: CalendarToggles): boolean {
   if (e.source === 'google') {
-    if (!t.google.connected || t.google.enabled === false) return false;
+    if (t.google.enabled === false) return false;
     const gcalId = googleCalIdFor(e.calendarId) ?? 'primary';
     return !t.hiddenGoogleCalendarIds.includes(gcalId);
   }
-  if (e.source === 'apple') return t.apple.connected && t.apple.enabled !== false;
+  if (e.source === 'apple') return t.apple.enabled !== false;
   if (e.source === 'subscription') {
     const sub = t.subscribedCalendars.find((c) => `sub:${c.id}` === e.calendarId);
     return !!sub && sub.enabled;
