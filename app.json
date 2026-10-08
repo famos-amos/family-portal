@@ -28,7 +28,20 @@
     },
     "plugins": [
       "expo-font",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Huddle uses your photos for the ambient screensaver slideshow.",
+          "cameraPermission": "Huddle uses your camera for Snap, to read flyers and add their details to your calendar, to-do list, or meal plan."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Huddle listens for a moment after you press the Huddle button, to turn what you say into calendar events, reminders, chores and shopping-list items."
+        }
+      ]
     ],
     "experiments": {
       "baseUrl": "/family-portal"

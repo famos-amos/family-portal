@@ -1,27 +1,23 @@
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../theme/ThemeProvider';
 import { RootStackParamList } from '../navigation/types';
 import { NARROW_BREAKPOINT } from '../lib/layout';
-import {
-  BoardsIcon,
-  CalendarIcon,
-  ChoresIcon,
-  HomeIcon,
-  MealIcon,
-  SettingsIcon,
-} from './icons';
+import { SettingsIcon } from './icons';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-const TABS: { route: keyof RootStackParamList; label: string; Icon: typeof HomeIcon; accent: string }[] = [
-  { route: 'Home', label: 'Home', Icon: HomeIcon, accent: '#4A3B2E' },
-  { route: 'Calendar', label: 'Calendar', Icon: CalendarIcon, accent: '#2E6E82' },
-  { route: 'Chores', label: 'Chores', Icon: ChoresIcon, accent: '#2E7A4D' },
-  { route: 'MealPlans', label: 'Meal Plans', Icon: MealIcon, accent: '#9C6A1E' },
-  { route: 'Boards', label: 'Boards', Icon: BoardsIcon, accent: '#A24D6E' },
+// Illustrated badges cropped from the brand artwork — one per tab, including
+// the "H" mark standing in for Home (the wordmark itself lives in the brand
+// row instead, see `brand` below).
+const TABS: { route: keyof RootStackParamList; label: string; image: number; accent: string }[] = [
+  { route: 'Home', label: 'Home', image: require('../../assets/icons/huddle-logo.png'), accent: '#4A3B2E' },
+  { route: 'Calendar', label: 'Calendar', image: require('../../assets/icons/calendar.png'), accent: '#2E6E82' },
+  { route: 'Chores', label: 'Chores', image: require('../../assets/icons/chores.png'), accent: '#2E7A4D' },
+  { route: 'MealPlans', label: 'Meal Plans', image: require('../../assets/icons/meals.png'), accent: '#9C6A1E' },
+  { route: 'Boards', label: 'Boards', image: require('../../assets/icons/todo.png'), accent: '#A24D6E' },
 ];
 
 export function TopBar() {
@@ -31,23 +27,32 @@ export function TopBar() {
   const { width } = useWindowDimensions();
   const narrow = width < NARROW_BREAKPOINT;
 
-  const renderTab = ({ route: r, label, Icon, accent }: (typeof TABS)[number]) => {
+  const renderTab = ({ route: r, label, image, accent }: (typeof TABS)[number]) => {
     const active = route.name === r;
+    const iconSize = narrow ? 22 : 28;
     return (
       <Pressable
         key={r}
         onPress={() => navigation.navigate(r as any)}
         style={[
           styles.tab,
+          !narrow && styles.tabWide,
+          // Each tab keeps its own accent color even when inactive — a soft
+          // tint of it for the pill background, rather than flattening every
+          // inactive tab to the same grey — so the row reads as colorful at
+          // a glance, not just the one active tab.
           active
             ? { backgroundColor: theme.colors.panel, borderColor: accent }
-            : { backgroundColor: theme.isDark ? '#FFFFFF10' : '#00000006' },
+            : { backgroundColor: accent + (theme.isDark ? '26' : '16') },
         ]}
       >
-        <Icon size={17} color={active ? accent : theme.colors.inkSoft} />
+        <View style={[{ width: iconSize, height: iconSize }, !active && { opacity: 0.8 }]}>
+          <Image source={image} style={{ width: iconSize, height: iconSize }} resizeMode="contain" />
+        </View>
         <Text
           style={[
             styles.tabLabel,
+            !narrow && styles.tabLabelWide,
             { fontFamily: theme.fonts.headSemiBold, color: active ? theme.colors.ink : theme.colors.inkSoft },
           ]}
         >
@@ -59,8 +64,12 @@ export function TopBar() {
 
   const brand = (
     <View style={styles.brand}>
-      <View style={styles.brandDot} />
-      <Text style={[styles.brandName, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>Huddle</Text>
+      <Image
+        source={require('../../assets/icons/huddle-wordmark.png')}
+        style={[styles.brandWordmark, { tintColor: theme.colors.ink }]}
+        resizeMode="contain"
+        accessibilityLabel="Huddle"
+      />
     </View>
   );
 
@@ -74,7 +83,7 @@ export function TopBar() {
           : { backgroundColor: theme.isDark ? '#FFFFFF14' : '#00000008' },
       ]}
     >
-      <SettingsIcon size={18} color={route.name === 'Settings' ? theme.colors.panel : theme.colors.inkSoft} />
+      <SettingsIcon size={20} color={route.name === 'Settings' ? theme.colors.panel : theme.colors.inkSoft} />
     </Pressable>
   );
 
@@ -121,10 +130,12 @@ const styles = StyleSheet.create({
   },
   barNarrow: { flexDirection: 'column', alignItems: 'stretch' },
   narrowTopRow: { flexDirection: 'row', alignItems: 'center' },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 8, marginRight: 6 },
-  brandDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#AFD8E8' },
-  brandName: { fontSize: 18 },
-  tabs: { flexDirection: 'row', gap: 8, flex: 1, flexWrap: 'wrap' },
+  brand: { flexDirection: 'row', alignItems: 'center', marginRight: 6 },
+  brandWordmark: { width: 85, height: 27 },
+  // Centered (not left-packed against the brand) now that there's room —
+  // the wide header has the brand on the left and settings/Talk on the
+  // right, with the tabs free to sit in the middle of what's left.
+  tabs: { flexDirection: 'row', gap: 10, flex: 1, flexWrap: 'wrap', justifyContent: 'center' },
   tabsScroll: { flexDirection: 'row', gap: 8, paddingRight: 24 },
   tab: {
     flexDirection: 'row',
@@ -136,11 +147,13 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'transparent',
   },
+  tabWide: { paddingHorizontal: 18, paddingVertical: 11, gap: 8 },
   tabLabel: { fontSize: 13 },
+  tabLabelWide: { fontSize: 14.5 },
   settingsBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 6,

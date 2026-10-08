@@ -167,3 +167,33 @@ export type WidgetId =
   | 'chores';
 
 export type WidgetSize = 'sm' | 'md' | 'lg';
+
+// ---------------------------------------------------------------------------
+// Ambient screensaver (Settings → Screensaver) — device-local, like the rest
+// of the settings slice. The photos themselves (for 'photos' source) live in
+// shared Supabase Storage (see src/lib/ambientPhotos.ts); this is just this
+// device's preferences for how to show them.
+// ---------------------------------------------------------------------------
+export type AmbientSource = 'photos' | 'curated';
+export type AmbientTransitionStyle = 'sequential' | 'random';
+
+export type WeatherLocation = { label: string; lat: number; lon: number };
+
+export type AmbientSettings = {
+  enabled: boolean;
+  /** Minutes of no touch/mouse/keyboard activity before the screensaver shows. */
+  idleMinutes: number;
+  source: AmbientSource;
+  /** Which AMBIENT_CATEGORIES id to use when source === 'curated'. */
+  curatedCategoryId: string;
+  /** Minutes between background changes once showing. */
+  transitionMinutes: number;
+  transitionStyle: AmbientTransitionStyle;
+  showClock: boolean;
+  showWeather: boolean;
+  weatherLocation: WeatherLocation | null;
+  /** 0–1. Applied in-app (see src/lib/brightness.ts) whenever the app is
+   * open, not just during the screensaver — there's no physical brightness
+   * button on a wall-mounted tablet. */
+  brightness: number;
+};

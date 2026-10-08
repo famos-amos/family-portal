@@ -11,6 +11,13 @@ import type { LayoutChangeEvent } from 'react-native';
 export const NARROW_BREAKPOINT = 900;
 
 /**
+ * The 5 main tabs, in the order TopBar shows them and in the order a swipe
+ * moves through them on the narrow/mobile layout (see TabSwipeWrapper) —
+ * swiping forward from the last one wraps back around to the first.
+ */
+export const MAIN_TAB_ORDER = ['Home', 'Calendar', 'Chores', 'MealPlans', 'Boards'] as const;
+
+/**
  * Splits a container into `count` equal columns using an integer pixel width
  * measured from the container itself, instead of a `${100 / count}%` style on
  * each child.

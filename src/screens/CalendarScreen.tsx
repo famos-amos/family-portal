@@ -15,6 +15,7 @@ import {
   pushEventEditToGoogle,
 } from '../lib/googleCalendar';
 import { isEventCalendarEnabled } from '../lib/calendarVisibility';
+import { contrastText } from '../lib/contrastColor';
 import { eventCalendarColor } from '../lib/calendarColors';
 import {
   addSubscribedCalendarFromLink,
@@ -423,7 +424,7 @@ export function CalendarScreen() {
         <PrimaryButton
           label="Add Event"
           color={theme.colors.calDk}
-          icon={<PlusIcon size={15} color="#fff" />}
+          icon={PlusIcon}
           onPress={() => {
             setSelectedDate(view === 'day' ? toIso(cursor) : today);
             setPrefillTime(undefined);
@@ -632,7 +633,7 @@ export function CalendarScreen() {
                   { backgroundColor: theme.colors.ink, opacity: subBusy || !subName.trim() || !subUrl.trim() ? 0.4 : 1 },
                 ]}
               >
-                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>
+                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.ink) }}>
                   {subBusy ? 'Loading…' : 'Add'}
                 </Text>
               </Pressable>
@@ -675,7 +676,7 @@ export function CalendarScreen() {
                 </Text>
               </Pressable>
               <Pressable onPress={() => setColorPickerFor(null)} style={[styles.modalBtn, { backgroundColor: theme.colors.ink }]}>
-                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>Done</Text>
+                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.ink) }}>Done</Text>
               </Pressable>
             </View>
           </View>
@@ -980,7 +981,13 @@ function EventFormModal({
                         { backgroundColor: active ? theme.colors.calDk : theme.colors.fieldBg },
                       ]}
                     >
-                      <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: active ? '#fff' : theme.colors.ink }}>
+                      <Text
+                        style={{
+                          fontFamily: theme.fonts.headSemiBold,
+                          fontSize: 12,
+                          color: active ? contrastText(theme.colors.calDk) : theme.colors.ink,
+                        }}
+                      >
                         {c.label}
                       </Text>
                     </Pressable>
@@ -1038,7 +1045,7 @@ function EventFormModal({
                 }
                 style={[styles.modalBtn, { backgroundColor: theme.colors.ink, opacity: title.trim() ? 1 : 0.4 }]}
               >
-                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>Save</Text>
+                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.ink) }}>Save</Text>
               </Pressable>
             )}
           </View>

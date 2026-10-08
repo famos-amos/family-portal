@@ -8,6 +8,7 @@ import { AssignToPlanModal } from '../components/AssignToPlanModal';
 import { assignMealToPlan } from '../lib/assignMeal';
 import { notify } from '../lib/alerts';
 import { DayOfWeek, MealSlotType, MealSuggestion } from '../store/types';
+import { contrastText } from '../lib/contrastColor';
 
 // What's being assigned a day/slot via AssignToPlanModal — the same modal
 // serves three slightly different origins, so onConfirm knows what else (if
@@ -119,8 +120,10 @@ export function SuggestionsScreen() {
               }}
               style={[styles.addBtn, { backgroundColor: theme.colors.mealDk, opacity: customName.trim() ? 1 : 0.4 }]}
             >
-              <PlusIcon size={14} color="#fff" />
-              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff', fontSize: 13 }}>Save Suggestion</Text>
+              <PlusIcon size={14} color={contrastText(theme.colors.mealDk)} />
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.mealDk), fontSize: 13 }}>
+                Save Suggestion
+              </Text>
             </Pressable>
             <Pressable
               disabled={!customName.trim()}
@@ -196,7 +199,9 @@ export function SuggestionsScreen() {
                   onPress={() => setAssigning({ kind: 'existingSuggestion', suggestion: idea })}
                   style={[styles.pickDayBtn, { backgroundColor: theme.colors.mealDk }]}
                 >
-                  <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff', fontSize: 11.5 }}>Pick a Day</Text>
+                  <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.mealDk), fontSize: 11.5 }}>
+                    Pick a Day
+                  </Text>
                 </Pressable>
               )}
               <Pressable onPress={() => removeSuggestion(idea.id)} hitSlop={8} style={styles.removeBtn}>

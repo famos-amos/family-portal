@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeProvider';
+import { NARROW_BREAKPOINT } from '../../lib/layout';
 import {
   useBoardsStore,
   useCalendarStore,
@@ -21,8 +22,17 @@ import { CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ChoresIcon,
 import { Avatar } from '../../components/Avatar';
 import { SegmentedControl } from '../../components/ui';
 import { CalendarEvent, WidgetSize } from '../../store/types';
+import { contrastText } from '../../lib/contrastColor';
 
 const Row = ({ children }: { children: React.ReactNode }) => <View style={{ marginBottom: 10 }}>{children}</View>;
+
+/** True on the grid/desktop dashboard layout (tablet, laptop, larger
+ * displays) — as opposed to the single-column stacked mobile layout, which
+ * keeps its own (smaller) sizing. See lib/layout.ts. */
+function useIsWide(): boolean {
+  const { width } = useWindowDimensions();
+  return width >= NARROW_BREAKPOINT;
+}
 
 function SectionTitle({
   icon,
@@ -50,6 +60,7 @@ function SectionTitle({
 export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
   const theme = useTheme();
   const navigation = useNavigation<any>();
+  const wide = useIsWide();
   const [view, setView] = useState<'week' | 'month'>('month');
   const [cursor, setCursor] = useState(new Date());
   const events = useCalendarStore((s) => s.events);
@@ -94,8 +105,8 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
     : formatWeekTitle(cursor);
 
   return (
-    <View>
-      <SectionTitle icon={<CalendarIcon size={17} color={theme.colors.ink} />}>Calendar</SectionTitle>
+    <View style={{ flex: 1, minHeight: 0 }}>
+      <SectionTitle icon={<CalendarIcon size={wide ? 20 : 17} color={theme.colors.ink} />}>Calendar</SectionTitle>
       <SegmentedControl
         value={view}
         onChange={setView}
@@ -105,61 +116,148 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
         ]}
       />
       <View style={styles.calTitleRow}>
-        <Pressable onPress={() => navigate(-1)} style={styles.calNavBtn} hitSlop={6}>
-          <ChevronLeftIcon size={10} color={theme.colors.ink} />
+        <Pressable onPress={() => navigate(-1)} style={[styles.calNavBtn, wide && styles.calNavBtnWide]} hitSlop={6}>
+          <ChevronLeftIcon size={wide ? 13 : 10} color={theme.colors.ink} />
         </Pressable>
         <Text
           numberOfLines={1}
-          style={{ fontFamily: theme.fonts.headSemiBold, color: theme.colors.ink, fontSize: 12.5, marginTop: 8, flex: 1, textAlign: 'center' }}
+          style={{
+            fontFamily: theme.fonts.headSemiBold,
+            color: theme.colors.ink,
+            fontSize: wide ? 15 : 12.5,
+            marginTop: 8,
+            flex: 1,
+            textAlign: 'center',
+          }}
         >
           {titleText}
         </Text>
-        <Pressable onPress={() => navigate(1)} style={styles.calNavBtn} hitSlop={6}>
-          <ChevronRightIcon size={10} color={theme.colors.ink} />
+        <Pressable onPress={() => navigate(1)} style={[styles.calNavBtn, wide && styles.calNavBtnWide]} hitSlop={6}>
+          <ChevronRightIcon size={wide ? 13 : 10} color={theme.colors.ink} />
         </Pressable>
       </View>
-      <View style={styles.dowRow}>
-        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-          <Text key={i} style={[styles.dow, { color: theme.colors.inkSoft, fontFamily: theme.fonts.headSemiBold }]}>
-            {d}
-          </Text>
-        ))}
-      </View>
-      <View style={styles.calGrid}>
-        {weeks.map((week, wi) => (
-          <View key={wi} style={styles.calWeekRow}>
-            {week.map(({ date, inMonth }, i) => {
-              const iso = date.toISOString().slice(0, 10);
-              const isToday = iso === todayIso();
-              const dayEvents = visibleEvents.filter((e) => e.date === iso);
-              return (
-                <Pressable
-                  key={i}
-                  onPress={() => navigation.navigate('Calendar')}
-                  style={[
-                    styles.calCell,
-                    { backgroundColor: isToday ? theme.colors.panel : theme.isDark ? '#FFFFFF0A' : '#FFFFFFA8' },
-                    isToday && { borderWidth: 2, borderColor: theme.colors.cal },
-                    !inMonth && { opacity: 0.35 },
-                  ]}
-                >
-                  <Text style={{ fontSize: 10.5, color: theme.colors.ink, fontFamily: theme.fonts.bodyBold }}>
+
+      {view === 'month' ? (
+        <>
+          <View style={styles.dowRow}>
+            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+              <Text
+                key={i}
+                style={[
+                  styles.dow,
+                  { color: theme.colors.inkSoft, fontFamily: theme.fonts.headSemiBold },
+                  wide && { fontSize: 12.5 },
+                ]}
+              >
+                {d}
+              </Text>
+            ))}
+          </View>
+          <View style={styles.calGrid}>
+            {weeks.map((week, wi) => (
+              <View key={wi} style={styles.calWeekRow}>
+                {week.map(({ date, inMonth }, i) => {
+                  const iso = date.toISOString().slice(0, 10);
+                  const isToday = iso === todayIso();
+                  const dayEvents = visibleEvents.filter((e) => e.date === iso);
+                  return (
+                    <Pressable
+                      key={i}
+                      onPress={() => navigation.navigate('Calendar')}
+                      style={[
+                        styles.calCell,
+                        { backgroundColor: isToday ? theme.colors.panel : theme.isDark ? '#FFFFFF0A' : '#FFFFFFA8' },
+                        isToday && { borderWidth: 2, borderColor: theme.colors.cal },
+                        !inMonth && { opacity: 0.35 },
+                      ]}
+                    >
+                      <Text style={{ fontSize: wide ? 13 : 10.5, color: theme.colors.ink, fontFamily: theme.fonts.bodyBold }}>
+                        {date.getDate()}
+                      </Text>
+                      {size !== 'sm' && (
+                        <View style={styles.dotRow}>
+                          {dayEvents.slice(0, 3).map((e) => (
+                            <View
+                              key={e.id}
+                              style={[styles.dot, wide && styles.dotWide, { backgroundColor: dotColor(e) }]}
+                            />
+                          ))}
+                        </View>
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ))}
+          </View>
+        </>
+      ) : (
+        // Week view: a scrollable agenda of what the week actually holds,
+        // rather than the same small dotted day-cells — tap a day to jump
+        // straight to it on the full Calendar screen.
+        <ScrollView style={{ flex: 1, minHeight: 0 }} showsVerticalScrollIndicator={false}>
+          {days.map(({ date }) => {
+            const iso = date.toISOString().slice(0, 10);
+            const isToday = iso === todayIso();
+            const dayEvents = visibleEvents
+              .filter((e) => e.date === iso)
+              .sort((a, b) => (a.time ?? '').localeCompare(b.time ?? ''));
+            const visibleCount = wide ? 5 : 3;
+            return (
+              <Pressable
+                key={iso}
+                onPress={() => navigation.navigate('Calendar', { view: 'day', date: iso, ts: Date.now() })}
+                style={[
+                  styles.weekAgendaRow,
+                  { backgroundColor: isToday ? theme.colors.panel : theme.isDark ? '#FFFFFF0A' : '#FFFFFFA8' },
+                  isToday && { borderWidth: 2, borderColor: theme.colors.cal },
+                ]}
+              >
+                <View style={styles.weekAgendaDateCol}>
+                  <Text style={{ fontSize: wide ? 11 : 9.5, fontFamily: theme.fonts.headSemiBold, color: theme.colors.inkSoft }}>
+                    {date.toLocaleDateString('en-US', { weekday: 'short' })}
+                  </Text>
+                  <Text style={{ fontSize: wide ? 17 : 14, fontFamily: theme.fonts.head, color: theme.colors.ink }}>
                     {date.getDate()}
                   </Text>
-                  {size !== 'sm' && (
-                    <View style={styles.dotRow}>
-                      {dayEvents.slice(0, 3).map((e) => (
-                        <View key={e.id} style={[styles.dot, { backgroundColor: dotColor(e) }]} />
-                      ))}
-                    </View>
+                </View>
+                <View style={{ flex: 1 }}>
+                  {dayEvents.length === 0 ? (
+                    <Text style={{ fontSize: wide ? 12 : 10.5, fontFamily: theme.fonts.body, color: theme.colors.inkSoft }}>
+                      No events
+                    </Text>
+                  ) : (
+                    dayEvents.slice(0, visibleCount).map((e) => (
+                      <View key={e.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+                        <View style={[styles.dot, wide && styles.dotWide, { backgroundColor: dotColor(e) }]} />
+                        <Text
+                          numberOfLines={1}
+                          style={{
+                            flexShrink: 1,
+                            fontSize: wide ? 12.5 : 10.5,
+                            fontFamily: theme.fonts.bodyBold,
+                            color: theme.colors.ink,
+                          }}
+                        >
+                          {e.time ? `${e.time} ` : ''}
+                          {e.title}
+                        </Text>
+                      </View>
+                    ))
                   )}
-                </Pressable>
-              );
-            })}
-          </View>
-        ))}
-      </View>
-      {size === 'lg' && (
+                  {dayEvents.length > visibleCount && (
+                    <Text style={{ fontSize: 10, fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }}>
+                      +{dayEvents.length - visibleCount} more
+                    </Text>
+                  )}
+                </View>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      )}
+
+      {view === 'month' && size === 'lg' && (
         <View style={styles.legendRow}>
           {family.map((m) => (
             <View key={m.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -245,6 +343,7 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
 // ---------------------------------------------------------------------------
 export function MealWidgetContent({ size }: { size: WidgetSize }) {
   const theme = useTheme();
+  const navigation = useNavigation<any>();
   const meals = useMealsStore((s) => s.meals);
   const family = useFamilyStore((s) => s.members);
   const today = dayOfWeek();
@@ -259,7 +358,7 @@ export function MealWidgetContent({ size }: { size: WidgetSize }) {
     .filter((x) => x.meal);
 
   return (
-    <View>
+    <Pressable onPress={() => navigation.navigate('MealPlans')} style={{ flex: 1 }}>
       <SectionTitle icon={<MealIcon size={17} color={theme.colors.ink} />}>Meal Plan</SectionTitle>
       <View style={[styles.mealHero, { backgroundColor: theme.isDark ? '#FFFFFF10' : '#FFFFFFA0' }]}>
         <Text style={{ fontFamily: theme.fonts.head, fontSize: 15, color: theme.colors.ink, marginBottom: 3 }}>
@@ -289,7 +388,7 @@ export function MealWidgetContent({ size }: { size: WidgetSize }) {
             </Text>
           </View>
         ))}
-    </View>
+    </Pressable>
   );
 }
 
@@ -299,13 +398,16 @@ export function MealWidgetContent({ size }: { size: WidgetSize }) {
 // scroll the list within it.
 export function TodoWidgetContent() {
   const theme = useTheme();
+  const navigation = useNavigation<any>();
   const allItems = useBoardsStore((s) => s.items);
   const toggle = useBoardsStore((s) => s.toggleItem);
   const items = allItems.filter((i) => i.columnId === 'todo');
 
   return (
     <View style={{ flex: 1, minHeight: 0 }}>
-      <SectionTitle icon={<ChoresIcon size={17} color={theme.colors.ink} />}>To Do</SectionTitle>
+      <Pressable onPress={() => navigation.navigate('Boards')}>
+        <SectionTitle icon={<ChoresIcon size={17} color={theme.colors.ink} />}>To Do</SectionTitle>
+      </Pressable>
       <ScrollView style={{ flex: 1, minHeight: 0 }} showsVerticalScrollIndicator={false}>
         {items.map((item) => (
           <Pressable key={item.id} onPress={() => toggle(item.id)} style={styles.todoRow}>
@@ -395,7 +497,7 @@ export function ChallengeWidgetContent() {
                     justifyContent: 'center',
                   }}
                 >
-                  <CheckIcon size={8} color="#fff" />
+                  <CheckIcon size={8} color={contrastText(theme.colors.boardsDk)} />
                 </View>
               )}
             </View>
@@ -574,6 +676,7 @@ function ProgressRing({
 export function ChoresWidgetContent() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
+  const wide = useIsWide();
   const chores = useChoresStore((s) => s.chores);
   const family = useFamilyStore((s) => s.members);
 
@@ -590,27 +693,34 @@ export function ChoresWidgetContent() {
     })
     .filter((x) => x.total > 0);
 
+  // Bigger rings + type on the wide/desktop dashboard — the fixed 60px ring
+  // this card shipped with reads as tiny on a 14"+ display.
+  const ringSize = wide ? 92 : 60;
+  const ringStroke = wide ? 10 : 7;
+
   return (
     <Pressable onPress={() => navigation.navigate('Chores')} style={{ flex: 1 }}>
-      <SectionTitle icon={<ChoresIcon size={17} color={theme.colors.ink} />}>Chores</SectionTitle>
-      <View style={{ flexDirection: 'row', gap: 18 }}>
+      <SectionTitle icon={<ChoresIcon size={wide ? 20 : 17} color={theme.colors.ink} />}>Chores</SectionTitle>
+      <View style={{ flexDirection: 'row', gap: wide ? 24 : 18 }}>
         {withChores.map(({ member, total, done, stars }) => (
-          <View key={member.id} style={{ flex: 1, alignItems: 'center', gap: 6 }}>
-            <Text style={{ fontFamily: theme.fonts.head, fontSize: 13, color: member.color }}>{member.name}</Text>
+          <View key={member.id} style={{ flex: 1, alignItems: 'center', gap: wide ? 8 : 6 }}>
+            <Text style={{ fontFamily: theme.fonts.head, fontSize: wide ? 16 : 13, color: member.color }}>
+              {member.name}
+            </Text>
             <ProgressRing
-              size={60}
-              stroke={7}
+              size={ringSize}
+              stroke={ringStroke}
               progress={total ? done / total : 0}
               trackColor={theme.isDark ? '#FFFFFF20' : '#FFFFFFB0'}
               color={member.color}
             >
-              <Text style={{ fontFamily: theme.fonts.head, fontSize: 12, color: theme.colors.ink }}>
+              <Text style={{ fontFamily: theme.fonts.head, fontSize: wide ? 16 : 12, color: theme.colors.ink }}>
                 {done}/{total}
               </Text>
             </ProgressRing>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-              <StarIcon size={11} color={theme.colors.star} />
-              <Text style={{ fontSize: 10.5, fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }}>
+              <StarIcon size={wide ? 13 : 11} color={theme.colors.star} />
+              <Text style={{ fontSize: wide ? 12.5 : 10.5, fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }}>
                 {stars} stars earned
               </Text>
             </View>
@@ -624,6 +734,7 @@ export function ChoresWidgetContent() {
 const styles = StyleSheet.create({
   calTitleRow: { marginBottom: 2, flexDirection: 'row', alignItems: 'center' },
   calNavBtn: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#ffffffb0', alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+  calNavBtnWide: { width: 24, height: 24, borderRadius: 12 },
   dowRow: { flexDirection: 'row', marginTop: 8 },
   dow: { flex: 1, textAlign: 'center', fontSize: 10 },
   calGrid: {},
@@ -639,6 +750,15 @@ const styles = StyleSheet.create({
   },
   dotRow: { flexDirection: 'row', gap: 2, marginTop: 2 },
   dot: { width: 4.5, height: 4.5, borderRadius: 2.5 },
+  dotWide: { width: 6, height: 6, borderRadius: 3 },
+  weekAgendaRow: {
+    flexDirection: 'row',
+    gap: 12,
+    borderRadius: 10,
+    padding: 8,
+    marginBottom: 6,
+  },
+  weekAgendaDateCol: { width: 38, alignItems: 'center' },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#00000018', borderStyle: 'dashed' },
   legendDot: { width: 9, height: 9, borderRadius: 4.5 },
   eventRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderBottomWidth: 1 },

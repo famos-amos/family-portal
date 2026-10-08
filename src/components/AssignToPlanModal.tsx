@@ -7,6 +7,7 @@ import { useTheme } from '../theme/ThemeProvider';
 import { SegmentedControl } from './ui';
 import { WEEKDAY_LABELS, dayOfWeek } from '../lib/date';
 import { DayOfWeek, MealSlotType } from '../store/types';
+import { contrastText } from '../lib/contrastColor';
 
 export function AssignToPlanModal({
   visible,
@@ -53,7 +54,13 @@ export function AssignToPlanModal({
                 onPress={() => setDay(key)}
                 style={[styles.dayChip, { backgroundColor: day === key ? theme.colors.mealDk : theme.colors.fieldBg }]}
               >
-                <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: day === key ? '#fff' : theme.colors.ink }}>
+                <Text
+                  style={{
+                    fontFamily: theme.fonts.headSemiBold,
+                    fontSize: 12,
+                    color: day === key ? contrastText(theme.colors.mealDk) : theme.colors.ink,
+                  }}
+                >
                   {label}
                 </Text>
               </Pressable>
@@ -81,7 +88,7 @@ export function AssignToPlanModal({
               onPress={() => onConfirm(day, slot)}
               style={[styles.modalBtn, { backgroundColor: theme.colors.mealDk }]}
             >
-              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>Add to Plan</Text>
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.mealDk) }}>Add to Plan</Text>
             </Pressable>
           </View>
         </View>

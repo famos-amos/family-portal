@@ -35,7 +35,13 @@ export function HomeScreen() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.colors.bg }]}>
       <TopBar />
-      <Text style={[styles.hint, { color: theme.colors.inkSoft, fontFamily: theme.fonts.bodyBold }]}>
+      <Text
+        style={[
+          styles.hint,
+          { color: theme.colors.inkSoft, fontFamily: theme.fonts.bodyBold },
+          isGrid && styles.hintWide,
+        ]}
+      >
         Tap the corner mark on a card to show more or less detail.
       </Text>
       {isGrid ? (
@@ -67,13 +73,14 @@ const SIZED_WIDGETS = new Set<WidgetId>(['calendar', 'events', 'meal']);
 const STACKED_ORDER: WidgetId[] = ['calendar', 'events', 'meal', 'todo', 'challenge', 'verse', 'chores'];
 
 // Reproduces the design's 3-column CSS grid —
-//   grid-template-columns: 270px 1fr 300px
+//   grid-template-columns: 340px 1fr 290px
 //   grid-template-rows: 1fr 1fr 1fr
 //   grid-template-areas: "cal events meal" "cal todo challenge" "verse chores chores"
 // — with nested flexbox rather than CSS grid so the exact same layout works
 // on native (Android tablet) as well as web. The three column widths below
-// (270 / 622 / 300) are the mockup's literal pixel widths used as flex
-// ratios, so columns line up between the top and bottom row groups.
+// (340 / 560 / 290 — widened from the original mockup's 270 / 622 / 300 to
+// give the calendar more room on larger displays) are used as flex ratios,
+// so columns line up between the top and bottom row groups.
 function DashboardGrid({
   sizes,
   setSize,
@@ -99,20 +106,20 @@ function DashboardGrid({
     <View style={styles.grid}>
       {/* Rows 1–2: calendar (tall, left) · events/todo (middle) · meal/challenge (right) */}
       <View style={[styles.gridRow, { flex: 2 }]}>
-        {cell('calendar', { flex: 270 })}
-        <View style={[styles.gridCol, { flex: 622 }]}>
+        {cell('calendar', { flex: 340 })}
+        <View style={[styles.gridCol, { flex: 560 }]}>
           {cell('events', { flex: 1 })}
           {cell('todo', { flex: 1 })}
         </View>
-        <View style={[styles.gridCol, { flex: 300 }]}>
+        <View style={[styles.gridCol, { flex: 290 }]}>
           {cell('meal', { flex: 1 })}
           {cell('challenge', { flex: 1 })}
         </View>
       </View>
       {/* Row 3: verse (left, under calendar) · chores summary (spans the rest) */}
       <View style={[styles.gridRow, { flex: 1 }]}>
-        {cell('verse', { flex: 270 })}
-        {cell('chores', { flex: 922 })}
+        {cell('verse', { flex: 340 })}
+        {cell('chores', { flex: 850 })}
       </View>
     </View>
   );
@@ -158,6 +165,7 @@ function backgroundFor(id: WidgetId, theme: ReturnType<typeof useTheme>) {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   hint: { paddingHorizontal: 24, fontSize: 11.5, marginBottom: 6 },
+  hintWide: { fontSize: 13 },
   grid: { flex: 1, minHeight: 0, paddingHorizontal: 24, paddingBottom: 24, gap: 16 },
   gridRow: { flexDirection: 'row', gap: 16, minHeight: 0 },
   gridCol: { flexDirection: 'column', gap: 16, minHeight: 0 },

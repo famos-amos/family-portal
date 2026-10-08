@@ -7,6 +7,7 @@ import { EditIcon, PlusIcon, StarIcon } from '../components/icons';
 import { confirmAction } from '../lib/alerts';
 import { Checkbox, PrimaryButton } from '../components/ui';
 import { Chore } from '../store/types';
+import { contrastText } from '../lib/contrastColor';
 
 export function ChoresScreen() {
   const theme = useTheme();
@@ -152,7 +153,9 @@ function ChoreCard({
       </Text>
       {claimLabel ? (
         <Pressable onPress={onClaim} style={[styles.claimBtn, { backgroundColor: theme.colors.ink }]}>
-          <Text style={{ color: '#fff', fontFamily: theme.fonts.headSemiBold, fontSize: 10.5 }}>{claimLabel}</Text>
+          <Text style={{ color: contrastText(theme.colors.ink), fontFamily: theme.fonts.headSemiBold, fontSize: 10.5 }}>
+            {claimLabel}
+          </Text>
         </Pressable>
       ) : chore.points > 0 ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
@@ -228,7 +231,13 @@ function ChoreFormModal({
               onPress={() => setAssignee(null)}
               style={[styles.personChip, { backgroundColor: assignee === null ? theme.colors.ink : theme.colors.fieldBg }]}
             >
-              <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: assignee === null ? '#fff' : theme.colors.ink }}>
+              <Text
+                style={{
+                  fontFamily: theme.fonts.headSemiBold,
+                  fontSize: 12,
+                  color: assignee === null ? contrastText(theme.colors.ink) : theme.colors.ink,
+                }}
+              >
                 Up for Grabs
               </Text>
             </Pressable>
@@ -258,7 +267,9 @@ function ChoreFormModal({
               onPress={() => onSave({ title: title.trim(), points: Number(points) || 0, assigneeId: assignee })}
               style={[styles.modalBtn, { backgroundColor: theme.colors.ink, opacity: title.trim() ? 1 : 0.4 }]}
             >
-              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>{mode === 'edit' ? 'Save' : 'Add'}</Text>
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.ink) }}>
+                {mode === 'edit' ? 'Save' : 'Add'}
+              </Text>
             </Pressable>
           </View>
         </View>

@@ -168,6 +168,22 @@ alter publication supabase_realtime add table meal_suggestions;
 alter publication supabase_realtime add table app_lock;
 
 -- ---------------------------------------------------------------------------
+-- Storage — a public bucket for uploaded family photos, used by the ambient
+-- screensaver slideshow (Settings → Screensaver). Same "allow all to anon"
+-- posture as every table above.
+-- ---------------------------------------------------------------------------
+
+insert into storage.buckets (id, name, public)
+values ('family-photos', 'family-photos', true)
+on conflict (id) do nothing;
+
+drop policy if exists "allow all to anon on family-photos" on storage.objects;
+create policy "allow all to anon on family-photos" on storage.objects
+  for all to anon
+  using (bucket_id = 'family-photos')
+  with check (bucket_id = 'family-photos');
+
+-- ---------------------------------------------------------------------------
 -- Starter data — same starter family/chores/meals/boards the app used to
 -- ship with locally, so the app isn't empty on first load. Safe to re-run —
 -- existing rows are left alone. Feel free to delete all of this later from

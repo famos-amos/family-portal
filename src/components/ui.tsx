@@ -2,6 +2,7 @@
 import React from 'react';
 import { Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { useTheme } from '../theme/ThemeProvider';
+import { contrastText } from '../lib/contrastColor';
 
 export function Card({
   children,
@@ -67,24 +68,26 @@ export function PrimaryButton({
   label,
   onPress,
   color,
-  icon,
+  icon: Icon,
 }: {
   label: string;
   onPress: () => void;
   color?: string;
-  icon?: React.ReactNode;
+  /** An icon component (e.g. PlusIcon), not a pre-colored element — this
+   * button owns the icon's color so it can keep it readable against
+   * whichever background color it ends up with (see contrastText). */
+  icon?: React.ComponentType<{ size?: number; color?: string }>;
 }) {
   const theme = useTheme();
+  const bg = color ?? theme.colors.ink;
+  const fg = contrastText(bg);
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.primaryBtn,
-        { backgroundColor: color ?? theme.colors.ink, opacity: pressed ? 0.85 : 1 },
-      ]}
+      style={({ pressed }) => [styles.primaryBtn, { backgroundColor: bg, opacity: pressed ? 0.85 : 1 }]}
     >
-      {icon}
-      <Text style={[styles.primaryBtnText, { fontFamily: theme.fonts.headSemiBold }]}>{label}</Text>
+      {Icon && <Icon size={15} color={fg} />}
+      <Text style={[styles.primaryBtnText, { fontFamily: theme.fonts.headSemiBold, color: fg }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -155,7 +158,7 @@ export function Checkbox({ checked, onPress, color }: { checked: boolean; onPres
     >
       {checked && (
         <View style={styles.checkMark}>
-          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>✓</Text>
+          <Text style={{ color: contrastText(c), fontSize: 11, fontWeight: '700' }}>✓</Text>
         </View>
       )}
     </Pressable>
@@ -182,7 +185,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 999,
   },
-  primaryBtnText: { color: '#fff', fontSize: 14 },
+  primaryBtnText: { fontSize: 14 },
   segment: { flexDirection: 'row', borderRadius: 999, padding: 3, gap: 2 },
   segmentBtn: { flex: 1, paddingVertical: 8, borderRadius: 999, alignItems: 'center' },
   segmentText: { fontSize: 13 },

@@ -11,6 +11,7 @@ import { SettingsScreen } from '../screens/SettingsScreen';
 import { GroceryListScreen } from '../screens/GroceryListScreen';
 import { RecipesScreen } from '../screens/RecipesScreen';
 import { SuggestionsScreen } from '../screens/SuggestionsScreen';
+import { TabSwipeWrapper } from './TabSwipeWrapper';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -18,11 +19,14 @@ export function RootNavigator() {
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Home">
-        <Stack.Screen name="Home" component={HomeScreen} />
-        <Stack.Screen name="Calendar" component={CalendarScreen} />
-        <Stack.Screen name="Chores" component={ChoresScreen} />
-        <Stack.Screen name="MealPlans" component={MealPlansScreen} />
-        <Stack.Screen name="Boards" component={BoardsScreen} />
+        {/* The 5 main tabs are wrapped in TabSwipeWrapper so a horizontal
+            swipe moves between them (looping) on the narrow/mobile layout —
+            see TabSwipeWrapper.tsx. It's a no-op on the wide/desktop layout. */}
+        <Stack.Screen name="Home">{() => <TabSwipeWrapper><HomeScreen /></TabSwipeWrapper>}</Stack.Screen>
+        <Stack.Screen name="Calendar">{() => <TabSwipeWrapper><CalendarScreen /></TabSwipeWrapper>}</Stack.Screen>
+        <Stack.Screen name="Chores">{() => <TabSwipeWrapper><ChoresScreen /></TabSwipeWrapper>}</Stack.Screen>
+        <Stack.Screen name="MealPlans">{() => <TabSwipeWrapper><MealPlansScreen /></TabSwipeWrapper>}</Stack.Screen>
+        <Stack.Screen name="Boards">{() => <TabSwipeWrapper><BoardsScreen /></TabSwipeWrapper>}</Stack.Screen>
         <Stack.Screen name="Settings" component={SettingsScreen} />
         <Stack.Screen name="GroceryList" component={GroceryListScreen} />
         <Stack.Screen name="Recipes" component={RecipesScreen} />

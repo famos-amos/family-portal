@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Image,
+  Modal,
   Platform,
   Pressable,
   SafeAreaView,
@@ -40,13 +42,21 @@ import {
   removeSubscribedCalendarWithEvents,
   toggleSubscribedCalendarWithRefresh,
 } from '../lib/icsCalendar';
+import { AmbientScreen } from './AmbientScreen';
+import { AMBIENT_CATEGORIES } from '../data/ambientBackgrounds';
+import { AmbientPhoto, listAmbientPhotos, pickAndUploadAmbientPhotos, removeAmbientPhoto } from '../lib/ambientPhotos';
+import { geocodeLocation } from '../lib/weather';
+import { WeatherLocation } from '../store/types';
+import { contrastText } from '../lib/contrastColor';
+import { useSettingsDirtyStore, watchForSettingsChanges } from '../lib/settingsDirty';
 
-type SectionId = 'family' | 'appearance' | 'calendars' | 'notifications' | 'security' | 'about';
+type SectionId = 'family' | 'appearance' | 'calendars' | 'screensaver' | 'notifications' | 'security' | 'about';
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'family', label: 'Family Members' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'calendars', label: 'Connected Calendars' },
+  { id: 'screensaver', label: 'Screensaver' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'security', label: 'App Lock' },
   { id: 'about', label: 'About' },
@@ -62,10 +72,35 @@ function initialsFor(name: string): string {
 export function SettingsScreen() {
   const theme = useTheme();
   const [section, setSection] = useState<SectionId>('family');
+  const dirty = useSettingsDirtyStore((s) => s.dirty);
+  const markSaved = useSettingsDirtyStore((s) => s.markSaved);
+
+  // Watches every store a Settings section can edit (see settingsDirty.ts)
+  // for the lifetime of this screen, regardless of which section is
+  // currently showing — so the Save bar below is correct "on all the
+  // settings pages", not just the one you happened to edit on.
+  useEffect(() => watchForSettingsChanges(), []);
+
+  const handleSave = () => {
+    markSaved();
+    notify('Saved', 'Your changes have been saved.');
+  };
 
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.colors.bg }]}>
       <TopBar />
+      <View style={[styles.saveBar, { backgroundColor: theme.colors.panel }]}>
+        <Text style={{ fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.inkSoft, flex: 1 }}>
+          {dirty ? 'You have unsaved changes' : 'All changes saved'}
+        </Text>
+        <Pressable
+          onPress={handleSave}
+          disabled={!dirty}
+          style={[styles.saveBtn, { backgroundColor: theme.colors.ink, opacity: dirty ? 1 : 0.35 }]}
+        >
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: contrastText(theme.colors.ink) }}>Save</Text>
+        </Pressable>
+      </View>
       <View style={styles.body}>
         <View style={[styles.sidebar, { backgroundColor: theme.colors.panel }]}>
           {SECTIONS.map((s) => {
@@ -97,6 +132,7 @@ export function SettingsScreen() {
           {section === 'family' && <FamilyMembersSection />}
           {section === 'appearance' && <AppearanceSection />}
           {section === 'calendars' && <ConnectedCalendarsSection />}
+          {section === 'screensaver' && <ScreensaverSection />}
           {section === 'notifications' && <NotificationsSection />}
           {section === 'security' && <AppLockSection />}
           {section === 'about' && <AboutSection />}
@@ -144,7 +180,7 @@ function FamilyMembersSection() {
       <PrimaryButton
         label="Add Family Member"
         color={theme.colors.ink}
-        icon={<PlusIcon size={15} color="#fff" />}
+        icon={PlusIcon}
         onPress={() => {
           const name = 'New Member';
           addMember({
@@ -666,7 +702,7 @@ function ConnectedCalendarsSection() {
           <PrimaryButton
             label={subBusy ? 'Loading…' : 'Add calendar'}
             color={theme.colors.calDk}
-            icon={<PlusIcon size={15} color="#fff" />}
+            icon={PlusIcon}
             onPress={addPublicCalendar}
           />
         </View>
@@ -705,6 +741,340 @@ function NotificationsSection() {
           <Switch value={notifications[r.key]} onValueChange={(v) => setNotification(r.key, v)} />
         </View>
       ))}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Screensaver — ambient slideshow (own photos or a curated category), idle
+// delay, transition timing/order, optional clock + weather overlay, and
+// in-app brightness. See AmbientScreen.tsx (the actual full-screen display,
+// shown by App.tsx) and src/data/ambientBackgrounds.ts.
+// ---------------------------------------------------------------------------
+const IDLE_PRESETS_MIN = [1, 3, 5, 10, 15, 30];
+const TRANSITION_PRESETS_MIN = [1, 5, 10, 15, 30, 60];
+const BRIGHTNESS_STEPS = [0.25, 0.4, 0.55, 0.7, 0.85, 1];
+
+function ScreensaverSection() {
+  const theme = useTheme();
+  const ambient = useSettingsStore((s) => s.ambient);
+  const setAmbient = useSettingsStore((s) => s.setAmbient);
+  const [previewing, setPreviewing] = useState(false);
+
+  const [photos, setPhotos] = useState<AmbientPhoto[]>([]);
+  const [photosBusy, setPhotosBusy] = useState(false);
+  const [locationQuery, setLocationQuery] = useState(ambient.weatherLocation?.label ?? '');
+  const [locationResults, setLocationResults] = useState<WeatherLocation[]>([]);
+  const [searchingLocation, setSearchingLocation] = useState(false);
+
+  const refreshPhotos = async () => {
+    setPhotosBusy(true);
+    try {
+      setPhotos(await listAmbientPhotos());
+    } finally {
+      setPhotosBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (ambient.enabled && ambient.source === 'photos') refreshPhotos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ambient.enabled, ambient.source]);
+
+  const addPhotos = async () => {
+    try {
+      const n = await pickAndUploadAmbientPhotos();
+      if (n > 0) {
+        notify('Photos added', `Uploaded ${n} photo(s).`);
+        refreshPhotos();
+      }
+    } catch (err: any) {
+      notify('Could not add photos', String(err?.message ?? err));
+    }
+  };
+
+  const deletePhoto = (photo: AmbientPhoto) => {
+    confirmAction(
+      'Remove this photo?',
+      'It will no longer appear in the screensaver.',
+      'Remove',
+      async () => {
+        try {
+          await removeAmbientPhoto(photo.path);
+          refreshPhotos();
+        } catch (err: any) {
+          notify('Could not remove photo', String(err?.message ?? err));
+        }
+      },
+      { destructive: true },
+    );
+  };
+
+  const searchLocation = async () => {
+    if (!locationQuery.trim()) return;
+    setSearchingLocation(true);
+    try {
+      setLocationResults(await geocodeLocation(locationQuery.trim()));
+    } finally {
+      setSearchingLocation(false);
+    }
+  };
+
+  const pill = (active: boolean) => [
+    styles.disabledPill,
+    {
+      backgroundColor: active ? theme.colors.ink : theme.colors.fieldBg,
+      marginRight: 8,
+      marginBottom: 8,
+    },
+  ];
+  const pillText = (active: boolean) => ({
+    fontFamily: theme.fonts.headSemiBold,
+    fontSize: 12.5,
+    color: active ? contrastText(theme.colors.ink) : theme.colors.inkSoft,
+  });
+
+  return (
+    <View>
+      <Text style={[styles.h1, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>Screensaver</Text>
+      <Text style={[styles.sub, { fontFamily: theme.fonts.body, color: theme.colors.inkSoft }]}>
+        After a while with no touches, the screen fades into a warm photo slideshow instead of just going
+        dark — a real screensaver, not the device turning off.
+      </Text>
+
+      <View style={[styles.notifRow, { backgroundColor: theme.colors.fieldBg }]}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 14.5, color: theme.colors.ink }}>
+            Enable screensaver
+          </Text>
+          <Text style={{ fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.inkSoft, marginTop: 2 }}>
+            Shows after the idle delay below.
+          </Text>
+        </View>
+        <Pressable onPress={() => setPreviewing(true)} style={[styles.previewBtn, { backgroundColor: theme.colors.fieldBg, borderColor: theme.colors.ink }]}>
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.ink }}>Preview</Text>
+        </Pressable>
+        <Switch value={ambient.enabled} onValueChange={(v) => setAmbient({ enabled: v })} />
+      </View>
+
+      <Modal visible={previewing} animationType="fade" onRequestClose={() => setPreviewing(false)}>
+        {/* Tapping anywhere dismisses it — the touch bubbles up to this
+            plain View, same mechanism the real screensaver uses in App.tsx
+            (see useIdleTimer's comment) rather than a visible close button
+            getting in the way of seeing the actual slideshow. */}
+        <View style={{ flex: 1 }} onTouchStart={() => setPreviewing(false)}>
+          <AmbientScreen />
+          <View style={styles.previewHint} pointerEvents="none">
+            <Text style={styles.previewHintText}>Tap anywhere to close preview</Text>
+          </View>
+        </View>
+      </Modal>
+
+      {ambient.enabled && (
+        <>
+          <Text style={[styles.fieldLabel, { fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }]}>Show after</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {IDLE_PRESETS_MIN.map((m) => (
+              <Pressable key={m} onPress={() => setAmbient({ idleMinutes: m })} style={pill(ambient.idleMinutes === m)}>
+                <Text style={pillText(ambient.idleMinutes === m)}>{m} min</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={[styles.fieldLabel, { fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }]}>Background source</Text>
+          <View style={{ maxWidth: 420, marginBottom: 14 }}>
+            <SegmentedControl
+              value={ambient.source}
+              onChange={(v) => setAmbient({ source: v })}
+              options={[
+                { value: 'curated', label: 'Curated Art' },
+                { value: 'photos', label: 'My Photos' },
+              ]}
+            />
+          </View>
+
+          {ambient.source === 'curated' ? (
+            <View style={{ marginBottom: 14 }}>
+              {AMBIENT_CATEGORIES.map((c) => {
+                const active = ambient.curatedCategoryId === c.id;
+                return (
+                  <Pressable
+                    key={c.id}
+                    onPress={() => setAmbient({ curatedCategoryId: c.id })}
+                    style={[
+                      styles.notifRow,
+                      {
+                        backgroundColor: active ? theme.colors.ink : theme.colors.fieldBg,
+                        marginBottom: 8,
+                      },
+                    ]}
+                  >
+                    <Image source={{ uri: c.photos[0] }} style={styles.categoryThumb} />
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={{
+                          fontFamily: theme.fonts.headSemiBold,
+                          fontSize: 14,
+                          color: active ? contrastText(theme.colors.ink) : theme.colors.ink,
+                        }}
+                      >
+                        {c.label}
+                      </Text>
+                      <Text
+                        style={{
+                          fontFamily: theme.fonts.body,
+                          fontSize: 11.5,
+                          color: active ? contrastText(theme.colors.ink) + 'CC' : theme.colors.inkSoft,
+                          marginTop: 2,
+                        }}
+                      >
+                        {c.description}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+              <Text style={{ fontFamily: theme.fonts.body, fontSize: 11, color: theme.colors.inkSoft, marginTop: 2 }}>
+                Starter photo sets — see src/data/ambientBackgrounds.ts to swap in your own picks.
+              </Text>
+            </View>
+          ) : (
+            <View style={{ marginBottom: 14 }}>
+              <PrimaryButton
+                label={photosBusy ? 'Working…' : 'Add Photos'}
+                color={theme.colors.ink}
+                icon={PlusIcon}
+                onPress={addPhotos}
+              />
+              {photos.length === 0 ? (
+                <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft, marginTop: 10 }}>
+                  No photos uploaded yet — add some to use them in the slideshow. They're stored in your
+                  Supabase project, so they show up on every device, not just this one.
+                </Text>
+              ) : (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
+                  {photos.map((p) => (
+                    <View key={p.path} style={styles.photoThumbWrap}>
+                      <Image source={{ uri: p.url }} style={styles.photoThumb} />
+                      <Pressable
+                        onPress={() => deletePhoto(p)}
+                        style={[styles.photoThumbDelete, { backgroundColor: theme.colors.danger }]}
+                        hitSlop={6}
+                      >
+                        <TrashIcon size={12} color="#fff" />
+                      </Pressable>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+
+          <Text style={[styles.fieldLabel, { fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }]}>Change photo every</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {TRANSITION_PRESETS_MIN.map((m) => (
+              <Pressable
+                key={m}
+                onPress={() => setAmbient({ transitionMinutes: m })}
+                style={pill(ambient.transitionMinutes === m)}
+              >
+                <Text style={pillText(ambient.transitionMinutes === m)}>{m} min</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={[styles.fieldLabel, { fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }]}>Order</Text>
+          <View style={{ maxWidth: 320, marginBottom: 14 }}>
+            <SegmentedControl
+              value={ambient.transitionStyle}
+              onChange={(v) => setAmbient({ transitionStyle: v })}
+              options={[
+                { value: 'random', label: 'Random' },
+                { value: 'sequential', label: 'In order' },
+              ]}
+            />
+          </View>
+
+          <View style={[styles.notifRow, { backgroundColor: theme.colors.fieldBg }]}>
+            <Text style={{ flex: 1, fontFamily: theme.fonts.headSemiBold, fontSize: 14, color: theme.colors.ink }}>
+              Show time on photos
+            </Text>
+            <Switch value={ambient.showClock} onValueChange={(v) => setAmbient({ showClock: v })} />
+          </View>
+          <View style={[styles.notifRow, { backgroundColor: theme.colors.fieldBg }]}>
+            <Text style={{ flex: 1, fontFamily: theme.fonts.headSemiBold, fontSize: 14, color: theme.colors.ink }}>
+              Show weather on photos
+            </Text>
+            <Switch value={ambient.showWeather} onValueChange={(v) => setAmbient({ showWeather: v })} />
+          </View>
+
+          {ambient.showWeather && (
+            <View style={{ marginBottom: 14 }}>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TextInput
+                  value={locationQuery}
+                  onChangeText={setLocationQuery}
+                  placeholder="City, state, or ZIP"
+                  placeholderTextColor={theme.colors.inkSoft}
+                  style={[styles.input, { flex: 1, backgroundColor: theme.colors.fieldBg, color: theme.colors.ink }]}
+                  onSubmitEditing={searchLocation}
+                />
+                <PrimaryButton
+                  label={searchingLocation ? 'Searching…' : 'Search'}
+                  color={theme.colors.ink}
+                  onPress={searchLocation}
+                />
+              </View>
+              {locationResults.length > 0 && (
+                <View style={{ marginTop: 8 }}>
+                  {locationResults.map((r) => (
+                    <Pressable
+                      key={`${r.lat},${r.lon}`}
+                      onPress={() => {
+                        setAmbient({ weatherLocation: r });
+                        setLocationQuery(r.label);
+                        setLocationResults([]);
+                      }}
+                      style={[styles.notifRow, { backgroundColor: theme.colors.fieldBg, marginBottom: 6 }]}
+                    >
+                      <Text style={{ fontFamily: theme.fonts.body, fontSize: 13, color: theme.colors.ink }}>
+                        {r.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+              {ambient.weatherLocation && locationResults.length === 0 && (
+                <Text style={{ fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.inkSoft, marginTop: 8 }}>
+                  Current location: {ambient.weatherLocation.label}
+                </Text>
+              )}
+            </View>
+          )}
+
+          <Text style={[styles.fieldLabel, { fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }]}>Brightness</Text>
+          <Text style={{ fontFamily: theme.fonts.body, fontSize: 11.5, color: theme.colors.inkSoft, marginBottom: 8 }}>
+            Applies whenever the app is open, not just on the screensaver — handy with no physical
+            brightness button.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            {BRIGHTNESS_STEPS.map((b) => {
+              const active = Math.abs(ambient.brightness - b) < 0.01;
+              return (
+                <Pressable
+                  key={b}
+                  onPress={() => setAmbient({ brightness: b })}
+                  style={[
+                    styles.brightnessStep,
+                    { backgroundColor: `rgba(255,200,120,${b})` },
+                    active && { borderWidth: 3, borderColor: theme.colors.ink },
+                  ]}
+                />
+              );
+            })}
+          </View>
+        </>
+      )}
     </View>
   );
 }
@@ -846,6 +1216,16 @@ function AboutSection() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  saveBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 24,
+    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  saveBtn: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 999 },
   body: { flex: 1, flexDirection: 'row', paddingHorizontal: 24, gap: 18, paddingBottom: 24 },
   sidebar: { width: 210, borderRadius: 20, padding: 10, gap: 4 },
   sideItem: { paddingHorizontal: 14, paddingVertical: 11, borderRadius: 12 },
@@ -853,6 +1233,31 @@ const styles = StyleSheet.create({
   detailContent: { paddingBottom: 40, gap: 4 },
   h1: { fontSize: 20, marginBottom: 6 },
   sub: { fontSize: 13, lineHeight: 19, marginBottom: 16, maxWidth: 560 },
+  fieldLabel: { fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4, marginBottom: 8 },
+  categoryThumb: { width: 56, height: 56, borderRadius: 10 },
+  photoThumbWrap: { width: 110, height: 90, borderRadius: 10, overflow: 'hidden' },
+  photoThumb: { width: '100%', height: '100%' },
+  photoThumbDelete: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brightnessStep: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: 'transparent' },
+  previewBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, borderWidth: 1.5, marginRight: 10 },
+  previewHint: { position: 'absolute', top: 24, alignSelf: 'center' },
+  previewHintText: {
+    color: '#fff',
+    fontSize: 12,
+    backgroundColor: '#00000090',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
   memberCard: {
     flexDirection: 'row',
     alignItems: 'center',

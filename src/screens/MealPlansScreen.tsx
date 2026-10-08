@@ -10,6 +10,7 @@ import { PrimaryButton, SegmentedControl } from '../components/ui';
 import { DayOfWeek, Meal, MealSlotType } from '../store/types';
 import { confirmAction } from '../lib/alerts';
 import { useColumnWidth } from '../lib/layout';
+import { contrastText } from '../lib/contrastColor';
 
 function StarRatingPicker({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   const theme = useTheme();
@@ -32,6 +33,7 @@ export function MealPlansScreen() {
   const meals = useMealsStore((s) => s.meals);
   const upsertMeal = useMealsStore((s) => s.upsertMeal);
   const removeMeal = useMealsStore((s) => s.removeMeal);
+  const resetAllMeals = useMealsStore((s) => s.resetAllMeals);
   const family = useFamilyStore((s) => s.members);
   const today = dayOfWeek();
 
@@ -50,10 +52,24 @@ export function MealPlansScreen() {
       <View style={styles.toolbar}>
         <Text style={{ fontFamily: theme.fonts.head, fontSize: 18, color: theme.colors.ink }}>This Week</Text>
         <View style={{ flex: 1 }} />
+        <Pressable
+          onPress={() =>
+            confirmAction(
+              'Reset meal plan?',
+              'This clears every planned meal for the week — there’s no undo.',
+              'Reset',
+              resetAllMeals,
+              { destructive: true },
+            )
+          }
+          style={[styles.resetBtn, { borderColor: theme.colors.border }]}
+        >
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.inkSoft }}>Reset</Text>
+        </Pressable>
         <PrimaryButton
           label="Add Meal"
           color={theme.colors.mealDk}
-          icon={<PlusIcon size={15} color="#fff" />}
+          icon={PlusIcon}
           onPress={() => setEditing({ day: today, slot: 'dinner' })}
         />
       </View>
@@ -276,7 +292,7 @@ function EditMealModal({
               onPress={() => onSave({ name: name.trim(), chefIds, notes: notes.trim() || undefined, slot, rating: rating || undefined })}
               style={[styles.modalBtn, { backgroundColor: theme.colors.mealDk, opacity: name.trim() ? 1 : 0.4 }]}
             >
-              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>Save</Text>
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.mealDk) }}>Save</Text>
             </Pressable>
           </View>
         </View>
@@ -289,6 +305,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   scroll: { flex: 1, minHeight: 0 },
   toolbar: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 24, paddingBottom: 10 },
+  resetBtn: { paddingHorizontal: 16, paddingVertical: 11, borderRadius: 14, borderWidth: 1.5 },
   plannerWrap: { paddingHorizontal: 24 },
   planner: { flexDirection: 'row', flexWrap: 'wrap' },
   dayHead: { width: `${100 / 7}%`, textAlign: 'center', fontSize: 13, paddingBottom: 8 },

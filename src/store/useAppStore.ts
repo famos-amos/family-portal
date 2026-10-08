@@ -16,6 +16,7 @@ import {
 } from '../data/seed';
 import { seedRecipes } from '../data/recipes';
 import {
+  AmbientSettings,
   BoardColumn,
   BoardItem,
   CalendarEvent,
@@ -390,6 +391,7 @@ type MealsState = {
   hydrate: () => Promise<void>;
   upsertMeal: (m: Omit<Meal, 'id'> & { id?: string }) => void;
   removeMeal: (id: string) => void;
+  resetAllMeals: () => void;
 };
 
 let mealsSubscribed = false;
@@ -430,6 +432,19 @@ export const useMealsStore = create<MealsState>()((set, get) => ({
   removeMeal: (id) => {
     set((s) => ({ meals: s.meals.filter((m) => m.id !== id) }));
     syncDelete('meals', id);
+  },
+  resetAllMeals: () => {
+    const ids = get().meals.map((m) => m.id);
+    set({ meals: [] });
+    if (isSupabaseConfigured && ids.length) {
+      supabase
+        .from('meals')
+        .delete()
+        .in('id', ids)
+        .then(({ error }: { error: unknown }) => {
+          if (error) logSyncError('bulk delete', 'meals', error);
+        });
+    }
   },
 }));
 
@@ -1169,6 +1184,9 @@ type SettingsState = {
   updateSubscribedCalendar: (id: string, patch: Partial<Omit<SubscribedCalendar, 'id'>>) => void;
   toggleSubscribedCalendar: (id: string) => void;
   removeSubscribedCalendar: (id: string) => void;
+
+  ambient: AmbientSettings;
+  setAmbient: (patch: Partial<AmbientSettings>) => void;
 };
 
 export const useSettingsStore = create<SettingsState>()(
@@ -1234,6 +1252,20 @@ export const useSettingsStore = create<SettingsState>()(
         })),
       removeSubscribedCalendar: (id) =>
         set((s) => ({ subscribedCalendars: s.subscribedCalendars.filter((c) => c.id !== id) })),
+
+      ambient: {
+        enabled: false,
+        idleMinutes: 5,
+        source: 'curated',
+        curatedCategoryId: 'nature',
+        transitionMinutes: 10,
+        transitionStyle: 'random',
+        showClock: true,
+        showWeather: false,
+        weatherLocation: null,
+        brightness: 1,
+      },
+      setAmbient: (patch) => set((s) => ({ ambient: { ...s.ambient, ...patch } })),
     }),
     { name: 'roost.settings', storage },
   ),

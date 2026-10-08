@@ -10,6 +10,7 @@ import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 import { useTheme } from '../theme/ThemeProvider';
 import { useFamilyStore } from '../store/useAppStore';
 import { BoardAutoDelete, BoardItem } from '../store/types';
+import { contrastText } from '../lib/contrastColor';
 
 const AUTO_DELETE_OPTIONS: { value: BoardAutoDelete | null; label: string }[] = [
   { value: null, label: 'Off' },
@@ -105,7 +106,13 @@ export function BoardItemFormModal({
                   onPress={() => setAutoDelete(opt.value)}
                   style={[styles.personChip, { backgroundColor: active ? theme.colors.boardsDk : theme.colors.fieldBg }]}
                 >
-                  <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: active ? '#fff' : theme.colors.ink }}>
+                  <Text
+                    style={{
+                      fontFamily: theme.fonts.headSemiBold,
+                      fontSize: 12,
+                      color: active ? contrastText(theme.colors.boardsDk) : theme.colors.ink,
+                    }}
+                  >
                     {opt.label}
                   </Text>
                 </Pressable>
@@ -127,7 +134,7 @@ export function BoardItemFormModal({
               onPress={() => onSave({ title: title.trim(), description: description.trim() || undefined, ownerId, autoDelete })}
               style={[styles.modalBtn, { backgroundColor: theme.colors.ink, opacity: title.trim() ? 1 : 0.4 }]}
             >
-              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>{mode === 'edit' ? 'Save' : 'Add'}</Text>
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.ink) }}>{mode === 'edit' ? 'Save' : 'Add'}</Text>
             </Pressable>
           </View>
         </View>

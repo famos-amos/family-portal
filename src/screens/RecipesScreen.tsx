@@ -8,6 +8,7 @@ import { PrimaryButton, SegmentedControl } from '../components/ui';
 import { AssignToPlanModal } from '../components/AssignToPlanModal';
 import { assignMealToPlan } from '../lib/assignMeal';
 import { notify, confirmAction } from '../lib/alerts';
+import { contrastText } from '../lib/contrastColor';
 import { Ingredient, MealSlotType, Recipe } from '../store/types';
 
 const SLOT_LABEL: Record<MealSlotType, string> = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner' };
@@ -35,7 +36,7 @@ export function RecipesScreen() {
         <PrimaryButton
           label="Add Recipe"
           color={theme.colors.mealDk}
-          icon={<PlusIcon size={15} color="#fff" />}
+          icon={PlusIcon}
           onPress={() => setEditing('new')}
         />
       </View>
@@ -91,8 +92,10 @@ export function RecipesScreen() {
                     onPress={() => setAssigning(recipe)}
                     style={[styles.addBtn, { backgroundColor: theme.colors.mealDk }]}
                   >
-                    <PlusIcon size={14} color="#fff" />
-                    <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff', fontSize: 13 }}>Add to Plan</Text>
+                    <PlusIcon size={14} color={contrastText(theme.colors.mealDk)} />
+                    <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.mealDk), fontSize: 13 }}>
+                      Add to Plan
+                    </Text>
                   </Pressable>
                 </View>
               )}
@@ -305,7 +308,9 @@ function RecipeFormModal({
                 }
                 style={[styles.modalBtn, { backgroundColor: theme.colors.mealDk, opacity: canSave ? 1 : 0.4 }]}
               >
-                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>{initial ? 'Save' : 'Add'}</Text>
+                <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.mealDk) }}>
+                  {initial ? 'Save' : 'Add'}
+                </Text>
               </Pressable>
             </View>
           </View>

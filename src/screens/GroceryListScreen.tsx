@@ -46,7 +46,7 @@ export function GroceryListScreen() {
         <PrimaryButton
           label="Add Item"
           color={theme.colors.boardsDk}
-          icon={<PlusIcon size={15} color="#fff" />}
+          icon={PlusIcon}
           onPress={() => setAdding(true)}
         />
       </View>

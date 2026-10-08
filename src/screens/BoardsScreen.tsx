@@ -9,6 +9,7 @@ import { BoardItemFormModal } from '../components/BoardItemFormModal';
 import { personColorOptions } from '../theme/colors';
 import { BoardItem } from '../store/types';
 import { confirmAction } from '../lib/alerts';
+import { contrastText } from '../lib/contrastColor';
 
 export function BoardsScreen() {
   const theme = useTheme();
@@ -33,7 +34,7 @@ export function BoardsScreen() {
         <PrimaryButton
           label="New Board"
           color={theme.colors.boardsDk}
-          icon={<PlusIcon size={15} color="#fff" />}
+          icon={PlusIcon}
           onPress={() => setNewColumnOpen(true)}
         />
       </View>
@@ -194,7 +195,7 @@ function NewColumnModal({
               onPress={() => onSave(title.trim(), color)}
               style={[styles.modalBtn, { backgroundColor: theme.colors.ink, opacity: title.trim() ? 1 : 0.4 }]}
             >
-              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: '#fff' }}>Create</Text>
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, color: contrastText(theme.colors.ink) }}>Create</Text>
             </Pressable>
           </View>
         </View>
