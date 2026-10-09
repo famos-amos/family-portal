@@ -672,6 +672,11 @@ type CalendarState = {
   ) => void;
   /** Drop every event on a given calendar id — e.g. when a subscription is deleted. */
   removeEventsForCalendar: (calendarId: string) => void;
+  /** Wipes every calendar event, regardless of source — local, Google-synced,
+   * and every subscribed public calendar. A full reset for when sync has
+   * gone wrong and the data on screen can't be trusted, not a targeted
+   * cleanup — see the confirmation copy in CalendarScreen. */
+  resetAllEvents: () => void;
 };
 
 let calendarSubscribed = false;
@@ -805,6 +810,19 @@ export const useCalendarStore = create<CalendarState>()((set, get) => ({
         const { error } = await supabase.from('calendar_events').delete().eq('calendar_id', calendarId);
         if (error) logSyncError('delete', 'calendar_events', error);
       })();
+    }
+  },
+  resetAllEvents: () => {
+    const ids = get().events.map((e) => e.id);
+    set({ events: [] });
+    if (isSupabaseConfigured && ids.length) {
+      supabase
+        .from('calendar_events')
+        .delete()
+        .in('id', ids)
+        .then(({ error }: { error: unknown }) => {
+          if (error) logSyncError('bulk delete', 'calendar_events', error);
+        });
     }
   },
 }));

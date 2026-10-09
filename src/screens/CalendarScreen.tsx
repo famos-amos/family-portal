@@ -4,7 +4,7 @@ import { useRoute, type RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/types';
 import { TopBar } from '../components/TopBar';
 import { useTheme } from '../theme/ThemeProvider';
-import { useCalendarStore, useFamilyStore, useSettingsStore } from '../store/useAppStore';
+import { useCalendarStore, useFamilyStore, useSettingsStore, useSyncStatusStore } from '../store/useAppStore';
 import { CalendarEvent, CalendarId, FamilyMember, GoogleCalendarSummary } from '../store/types';
 import { personColorOptions } from '../theme/colors';
 import {
@@ -77,6 +77,22 @@ export function CalendarScreen() {
   const addEvent = useCalendarStore((s) => s.addEvent);
   const updateEvent = useCalendarStore((s) => s.updateEvent);
   const removeEvent = useCalendarStore((s) => s.removeEvent);
+  const resetAllEvents = useCalendarStore((s) => s.resetAllEvents);
+  // Whether the last attempt to fetch calendar_events from Supabase actually
+  // succeeded — on failure the store deliberately keeps showing whatever it
+  // already had (seed/stale data) rather than going blank, which looks
+  // identical to a real sync at a glance. Surface it so "the calendar looks
+  // fine" and "the calendar IS fine" aren't just assumed to be the same thing.
+  const calendarSyncStatus = useSyncStatusStore((s) => s.tables['calendar_events']);
+  const [retrying, setRetrying] = useState(false);
+  const retrySync = async () => {
+    setRetrying(true);
+    try {
+      await useCalendarStore.getState().hydrate();
+    } finally {
+      setRetrying(false);
+    }
+  };
   const family = useFamilyStore((s) => s.members);
   const hidden = useSettingsStore((s) => s.hiddenPersonIds);
   const toggleVisibility = useSettingsStore((s) => s.togglePersonVisibility);
@@ -282,6 +298,18 @@ export function CalendarScreen() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.colors.bg }]}>
       <TopBar />
+      {calendarSyncStatus?.ok === false && (
+        <View style={[styles.syncWarning, { backgroundColor: theme.colors.danger + '1A' }]}>
+          <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 12, color: theme.colors.danger, flex: 1 }}>
+            Couldn't reach the database on last sync — what you see below may be out of date.
+          </Text>
+          <Pressable onPress={retrySync} disabled={retrying} hitSlop={6}>
+            <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.danger }}>
+              {retrying ? 'Retrying…' : 'Retry'}
+            </Text>
+          </Pressable>
+        </View>
+      )}
       <View style={styles.toolbar}>
         <SegmentedControl
           value={view}
@@ -421,6 +449,20 @@ export function CalendarScreen() {
           </Pressable>
         </View>
 
+        <Pressable
+          onPress={() =>
+            confirmAction(
+              'Reset the calendar?',
+              `This permanently deletes all ${events.length} event(s) — synced and local — for everyone. There's no undo. Google/subscribed calendars will repopulate on their next sync; anything added by hand in Huddle is gone for good.`,
+              'Reset Calendar',
+              resetAllEvents,
+              { destructive: true },
+            )
+          }
+          style={[styles.resetBtn, { borderColor: theme.colors.border }]}
+        >
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.inkSoft }}>Reset</Text>
+        </Pressable>
         <PrimaryButton
           label="Add Event"
           color={theme.colors.calDk}
@@ -1062,6 +1104,8 @@ const styles = StyleSheet.create({
   // allowed to scroll internally instead of just growing past the screen).
   scroll: { flex: 1, minHeight: 0 },
   toolbar: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 24, paddingBottom: 10, flexWrap: 'wrap' },
+  resetBtn: { paddingHorizontal: 16, paddingVertical: 11, borderRadius: 14, borderWidth: 1.5 },
+  syncWarning: { flexDirection: 'row', alignItems: 'center', gap: 14, marginHorizontal: 24, marginBottom: 10, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
   monthTitle: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   navBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#ffffffb0', alignItems: 'center', justifyContent: 'center' },
   legend: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
