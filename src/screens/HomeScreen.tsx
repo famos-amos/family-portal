@@ -35,15 +35,6 @@ export function HomeScreen() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.colors.bg }]}>
       <TopBar />
-      <Text
-        style={[
-          styles.hint,
-          { color: theme.colors.inkSoft, fontFamily: theme.fonts.bodyBold },
-          isGrid && styles.hintWide,
-        ]}
-      >
-        Tap the corner mark on a card to show more or less detail.
-      </Text>
       {isGrid ? (
         <DashboardGrid sizes={sizes} setSize={setSize} theme={theme} />
       ) : (
@@ -164,8 +155,6 @@ function backgroundFor(id: WidgetId, theme: ReturnType<typeof useTheme>) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  hint: { paddingHorizontal: 24, fontSize: 11.5, marginBottom: 6 },
-  hintWide: { fontSize: 13 },
   grid: { flex: 1, minHeight: 0, paddingHorizontal: 24, paddingBottom: 24, gap: 16 },
   gridRow: { flexDirection: 'row', gap: 16, minHeight: 0 },
   gridCol: { flexDirection: 'column', gap: 16, minHeight: 0 },

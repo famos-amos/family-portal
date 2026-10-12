@@ -137,13 +137,19 @@ export function HuddleButton() {
 
       {/* A big, unmissable overlay while recording/analyzing — the pill's own
           label changing is too easy to miss (small text, top corner), which
-          matters a lot for kids and on smaller screens. This is purely
-          visual (pointerEvents="box-none" on every layer except the Cancel
-          button itself) so the press-and-hold on the pill underneath keeps
-          working exactly as before — your finger never actually has to touch
-          this overlay to keep recording. */}
-      {(recording || analyzing) && (
-        <View pointerEvents="box-none" style={styles.talkOverlay}>
+          matters a lot for kids and on smaller screens. A plain absolutely-
+          positioned View doesn't work here: React Native resolves
+          `position: 'absolute'` against the nearest parent View regardless
+          of its own positioning, and this component's parent is the small
+          top-right controls row, not the full screen — so it rendered
+          tiny and off to the side. Modal sidesteps that entirely (it always
+          portals above everything, full-screen, same as the reviewing/error
+          dialogs below) without needing any pointerEvents tricks: a touch
+          that started on the Talk pill keeps delivering its release event
+          to that pill even once this modal is layered on top, so
+          press-and-hold still works exactly the same. */}
+      <Modal visible={recording || analyzing} transparent animationType="fade">
+        <View style={styles.talkOverlay}>
           <Animated.View
             style={[
               styles.talkOverlayCircle,
@@ -164,7 +170,7 @@ export function HuddleButton() {
             </Pressable>
           )}
         </View>
-      )}
+      </Modal>
 
       <Modal visible={phase === 'reviewing'} transparent animationType="fade" onRequestClose={tryAgain}>
         <View style={styles.modalBackdrop}>
@@ -270,11 +276,7 @@ const styles = StyleSheet.create({
   fabIcon: { fontSize: 17 },
   fabLabel: { fontSize: 13, fontWeight: '700' },
   talkOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flex: 1,
     backgroundColor: '#000000A0',
     alignItems: 'center',
     justifyContent: 'center',
