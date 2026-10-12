@@ -103,8 +103,19 @@ export function useGoogleAuthRequest() {
     // source of truth for this path) rather than hardcoding it here. Only
     // applied on web — native already redirects correctly via its own
     // `scheme` (see app.json) and isn't affected by baseUrl.
+    //
+    // The trailing slash matters, and not just cosmetically: GitHub Pages
+    // 301-redirects a path without one (/family-portal) to the version with
+    // one (/family-portal/) — and expo-web-browser's popup flow completes
+    // sign-in by comparing the URL it lands on against the exact redirect
+    // URL it was given. If those differ by even that slash (because Google
+    // sent it to the no-slash URL and GitHub Pages then redirected it), that
+    // comparison silently fails and the app never finds out sign-in
+    // succeeded — the popup closes, Google's side is done, but `response`
+    // stays null forever. Asking for the slash-terminated URL up front
+    // means there's no extra redirect to lose that signal in.
     Platform.OS === 'web' && Constants.expoConfig?.experiments?.baseUrl
-      ? { path: Constants.expoConfig.experiments.baseUrl.replace(/^\//, '') }
+      ? { path: `${Constants.expoConfig.experiments.baseUrl.replace(/^\/|\/$/g, '')}/` }
       : undefined,
   );
 
