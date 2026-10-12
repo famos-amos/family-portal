@@ -496,18 +496,22 @@ export function CalendarScreen() {
           }}
         />
       ) : (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.gridWrap}>
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.gridWrap} stickyHeaderIndices={[0]}>
+          {/* A direct ScrollView child (not nested inside the grid card) so
+              stickyHeaderIndices can pin it — on a tall month grid you'd
+              otherwise scroll the weekday labels away and have to scroll
+              back up to remember which column is which day. */}
+          <View style={[styles.dowRow, { backgroundColor: theme.colors.panel }]}>
+            {DOW.map((d) => (
+              <Text
+                key={d}
+                style={[styles.dow, dayColStyle, { color: theme.colors.inkSoft, fontFamily: theme.fonts.headSemiBold }]}
+              >
+                {d}
+              </Text>
+            ))}
+          </View>
           <View style={[styles.gridCard, { backgroundColor: theme.colors.panel }]}>
-            <View style={styles.dowRow}>
-              {DOW.map((d) => (
-                <Text
-                  key={d}
-                  style={[styles.dow, dayColStyle, { color: theme.colors.inkSoft, fontFamily: theme.fonts.headSemiBold }]}
-                >
-                  {d}
-                </Text>
-              ))}
-            </View>
             <View style={styles.monthGrid} onLayout={onGridLayout}>
               {days.map(({ date, inMonth }, i) => {
                 const iso = toIso(date);
@@ -1113,8 +1117,17 @@ const styles = StyleSheet.create({
   legendBox: { width: 15, height: 15, borderRadius: 5, borderWidth: 2, borderColor: '#00000022', alignItems: 'center', justifyContent: 'center' },
   filterHint: { fontSize: 11.5, paddingHorizontal: 24, marginBottom: 8 },
   gridWrap: { paddingHorizontal: 24, paddingBottom: 24 },
-  gridCard: { borderRadius: 22, padding: 14 },
-  dowRow: { flexDirection: 'row', marginBottom: 6 },
+  // No top padding/radius — dowRow (pinned above it via stickyHeaderIndices)
+  // supplies those so the two read as one continuous card.
+  gridCard: { borderBottomLeftRadius: 22, borderBottomRightRadius: 22, padding: 14, paddingTop: 0 },
+  dowRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 6,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+  },
   dow: { flex: 1, textAlign: 'center', fontSize: 12 },
   monthGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   dayCell: { width: `${100 / 7}%`, aspectRatio: 1, borderRadius: 10, padding: 5, marginBottom: 0 },

@@ -299,43 +299,47 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
     .sort((a, b) => (a.time ?? '').localeCompare(b.time ?? ''));
 
   const eventPeople = (ids: string[]) => family.filter((m) => ids.includes(m.id));
-  const list = size === 'sm' ? todays.slice(0, 2) : todays;
 
   return (
-    <Pressable onPress={openTodayInCalendar} style={{ flex: 1 }}>
+    <Pressable onPress={openTodayInCalendar} style={{ flex: 1, minHeight: 0 }}>
       <SectionTitle icon={<CalendarIcon size={17} color={theme.colors.ink} />}>Today's Events</SectionTitle>
-      {list.length === 0 && (
+      {todays.length === 0 && (
         <Text style={{ color: theme.colors.inkSoft, fontFamily: theme.fonts.body, fontSize: 13 }}>
           Nothing on the calendar today.
         </Text>
       )}
-      {list.map((e) => {
-        const people = eventPeople(e.personIds);
-        return (
-          <View key={e.id} style={[styles.eventRow, { borderBottomColor: theme.colors.border }]}>
-            <Text style={{ width: 64, fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.inkSoft }}>
-              {e.time ?? 'All day'}
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 2 }}>
-              {(people.length ? people : [null]).slice(0, 3).map((p, i) => (
-                <View
-                  key={p?.id ?? i}
-                  style={[
-                    styles.eventDot,
-                    {
-                      backgroundColor:
-                        p?.color ?? eventCalendarColor(e, google.calendars, googleCalendarColors) ?? theme.colors.inkSoft,
-                    },
-                  ]}
-                />
-              ))}
+      {/* Shows every event today, not just the first couple — scrolls
+          internally (like the other dashboard cards) rather than cutting
+          the list short when there are more than fit in the card. */}
+      <ScrollView style={{ flex: 1, minHeight: 0 }} showsVerticalScrollIndicator={false}>
+        {todays.map((e) => {
+          const people = eventPeople(e.personIds);
+          return (
+            <View key={e.id} style={[styles.eventRow, { borderBottomColor: theme.colors.border }]}>
+              <Text style={{ width: 64, fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.inkSoft }}>
+                {e.time ?? 'All day'}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 2 }}>
+                {(people.length ? people : [null]).slice(0, 3).map((p, i) => (
+                  <View
+                    key={p?.id ?? i}
+                    style={[
+                      styles.eventDot,
+                      {
+                        backgroundColor:
+                          p?.color ?? eventCalendarColor(e, google.calendars, googleCalendarColors) ?? theme.colors.inkSoft,
+                      },
+                    ]}
+                  />
+                ))}
+              </View>
+              <Text style={{ fontFamily: theme.fonts.bodySemiBold, fontSize: 14, color: theme.colors.ink, flex: 1 }}>
+                {e.title}
+              </Text>
             </View>
-            <Text style={{ fontFamily: theme.fonts.bodySemiBold, fontSize: 14, color: theme.colors.ink, flex: 1 }}>
-              {e.title}
-            </Text>
-          </View>
-        );
-      })}
+          );
+        })}
+      </ScrollView>
     </Pressable>
   );
 }

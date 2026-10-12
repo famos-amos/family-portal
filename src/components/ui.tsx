@@ -116,6 +116,7 @@ export function SegmentedControl<T extends string>({
             ]}
           >
             <Text
+              numberOfLines={1}
               style={[
                 styles.segmentText,
                 { fontFamily: theme.fonts.headSemiBold, color: active ? theme.colors.ink : theme.colors.inkSoft },
@@ -186,8 +187,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   primaryBtnText: { fontSize: 14 },
-  segment: { flexDirection: 'row', borderRadius: 999, padding: 3, gap: 2 },
-  segmentBtn: { flex: 1, paddingVertical: 8, borderRadius: 999, alignItems: 'center' },
+  // `flexShrink: 0` keeps this from being squeezed below the width its
+  // labels actually need when it shares a tight row with other toolbar
+  // items (e.g. CalendarScreen's Day/Week/Month next to nav buttons, chips,
+  // and action buttons) — a `flexWrap` row then wraps those other items
+  // instead of smushing this one's text.
+  segment: { flexDirection: 'row', borderRadius: 999, padding: 3, gap: 2, flexShrink: 0 },
+  segmentBtn: { flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, alignItems: 'center' },
   segmentText: { fontSize: 13 },
   switchTrack: { width: 40, height: 23, borderRadius: 999, padding: 2, justifyContent: 'center' },
   switchKnob: {
