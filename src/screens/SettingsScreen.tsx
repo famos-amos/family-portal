@@ -22,11 +22,13 @@ import { personColorOptions } from '../theme/colors';
 import { FamilyMember, ThemePreference } from '../store/types';
 import { confirmAction, notify } from '../lib/alerts';
 import {
+  consumeWebRedirectAuthResult,
   exchangeGoogleCode,
   fetchGoogleCalendarList,
   fetchGoogleEvents,
   getFreshGoogleAccessToken,
   isGoogleConfigured,
+  startWebRedirectAuth,
   useGoogleAuthRequest,
 } from '../lib/googleCalendar';
 import {
@@ -69,9 +71,22 @@ function initialsFor(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+// Google's redirect back after web sign-in (see startWebRedirectAuth /
+// consumeWebRedirectAuthResult in googleCalendar.ts) lands here with a
+// `code` or `error` query param — but the section that actually consumes it
+// (ConnectedCalendarsSection, under "Calendars") only mounts when that tab
+// is selected, and "Family" is the default. Without this, returning from
+// Google would silently sit unprocessed until the family member happened to
+// click over to Calendars themselves.
+function initialSettingsSection(): SectionId {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return 'family';
+  const params = new URLSearchParams(window.location.search);
+  return params.has('code') || params.has('error') ? 'calendars' : 'family';
+}
+
 export function SettingsScreen() {
   const theme = useTheme();
-  const [section, setSection] = useState<SectionId>('family');
+  const [section, setSection] = useState<SectionId>(initialSettingsSection);
   const dirty = useSettingsDirtyStore((s) => s.dirty);
   const markSaved = useSettingsDirtyStore((s) => s.markSaved);
 
@@ -364,88 +379,86 @@ function ConnectedCalendarsSection() {
     }
   };
 
-  // Guards against redeeming the same one-time auth code twice — the effect
-  // below runs again when `request` finishes loading after a web redirect.
+  // Shared tail end of connecting, however the access token was obtained
+  // (native's on-device code exchange, or either of the two web paths
+  // below) — records it, flips the UI to "connected", and does the first
+  // events pull.
+  const finishGoogleConnect = async (accessToken: string) => {
+    setGoogleAuth({ connected: true });
+    try {
+      const count = await runGoogleSync(accessToken);
+      notify('Google Calendar connected', `Synced ${count} upcoming event(s).`);
+    } catch (syncErr: any) {
+      // eslint-disable-next-line no-console
+      console.error('[google] initial events sync failed —', syncErr);
+      notify(
+        'Connected, but the first sync failed',
+        `${String(syncErr?.message ?? syncErr)}\n\nMost often this means the Google Calendar API ` +
+          'is not enabled on the project, or the calendar.events scope was not granted on the ' +
+          'OAuth consent screen. Fix that, then tap Sync Now.',
+      );
+    }
+  };
+
+  // Web sign-in picks back up here after Google redirects back to this page
+  // (see startWebRedirectAuth / consumeWebRedirectAuthResult's header
+  // comment in googleCalendar.ts for why this replaced the popup flow).
+  // Runs once on mount — if there's nothing to consume (e.g. a normal page
+  // load, not a return from Google), this is a no-op.
+  useEffect(() => {
+    const result = consumeWebRedirectAuthResult();
+    if (!result) return;
+    if (result.type === 'error') {
+      notify('Google sign-in failed', result.message);
+      return;
+    }
+    (async () => {
+      setGoogleBusy(true);
+      try {
+        const t = await exchangeGoogleCode({
+          code: result.code,
+          codeVerifier: result.codeVerifier,
+          redirectUri: `${window.location.origin}${window.location.pathname}`,
+        });
+        setGoogleAuth({ refreshToken: t.refreshToken, accessToken: t.accessToken, expiresAt: t.expiresAt });
+        await finishGoogleConnect(t.accessToken);
+      } catch (err: any) {
+        notify('Google sign-in failed', String(err?.message ?? err));
+      } finally {
+        setGoogleBusy(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Native only — the provider auto-exchanges the code on-device
+  // (shouldAutoExchangeCode is true there), so `response.authentication`
+  // already has a usable token. Web no longer uses `promptAsync`/`response`
+  // at all (see the redirect-based effect above), so this never fires there.
   const handledAuthRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log('[google] auth response:', response?.type, response);
-
     if (!response) return;
-
     if (response.type === 'error') {
       notify('Google sign-in failed', response.error?.message ?? 'Please try again.');
       return;
     }
-    if (response.type !== 'success') return; // dismiss / cancel / locked
+    if (response.type !== 'success' || !response.authentication?.accessToken) return;
 
-    const authKey = response.params?.code ?? response.authentication?.accessToken ?? 'ok';
+    const authKey = response.authentication.accessToken;
     if (handledAuthRef.current === authKey) return;
-
-    // On web the code exchange needs `request` (for codeVerifier + redirectUri),
-    // which can still be loading right after a redirect. Wait for the next run
-    // (deps include `request`) instead of bailing for good.
-    const haveNativeToken = !!response.authentication?.accessToken;
-    if (!haveNativeToken && !request) return;
-
     handledAuthRef.current = authKey;
 
     (async () => {
       setGoogleBusy(true);
       try {
-        let accessToken: string | undefined;
-        if (response.authentication?.accessToken) {
-          // Native: the provider already redeemed the code on-device.
-          const a = response.authentication;
-          accessToken = a.accessToken;
-          setGoogleAuth({
-            refreshToken: a.refreshToken ?? undefined,
-            accessToken: a.accessToken,
-            expiresAt: Date.now() + (a.expiresIn ?? 3600) * 1000,
-          });
-        } else if (response.params?.code && request) {
-          // Web: redeem the code via the backend (holds the client secret).
-          const t = await exchangeGoogleCode({
-            code: response.params.code,
-            codeVerifier: request.codeVerifier ?? '',
-            redirectUri: request.redirectUri,
-          });
-          accessToken = t.accessToken;
-          setGoogleAuth({
-            refreshToken: t.refreshToken,
-            accessToken: t.accessToken,
-            expiresAt: t.expiresAt,
-          });
-        }
-
-        if (!accessToken) {
-          handledAuthRef.current = null;
-          // eslint-disable-next-line no-console
-          console.error('[google] success response but no token extracted', response);
-          notify(
-            'Google sign-in incomplete',
-            'Signed in, but no access token came back. Check the console for the auth response shape.',
-          );
-          return;
-        }
-
-        // Authenticated now — reflect that in the UI regardless of whether the
-        // first events pull works.
-        setGoogleAuth({ connected: true });
-        try {
-          const count = await runGoogleSync(accessToken);
-          notify('Google Calendar connected', `Synced ${count} upcoming event(s).`);
-        } catch (syncErr: any) {
-          // eslint-disable-next-line no-console
-          console.error('[google] initial events sync failed —', syncErr);
-          notify(
-            'Connected, but the first sync failed',
-            `${String(syncErr?.message ?? syncErr)}\n\nMost often this means the Google Calendar API ` +
-              'is not enabled on the project, or the calendar.events scope was not granted on the ' +
-              'OAuth consent screen. Fix that, then tap Sync Now.',
-          );
-        }
+        const a = response.authentication!;
+        setGoogleAuth({
+          refreshToken: a.refreshToken ?? undefined,
+          accessToken: a.accessToken,
+          expiresAt: Date.now() + (a.expiresIn ?? 3600) * 1000,
+        });
+        await finishGoogleConnect(a.accessToken);
       } catch (err: any) {
         handledAuthRef.current = null;
         notify('Google sign-in failed', String(err?.message ?? err));
@@ -453,7 +466,7 @@ function ConnectedCalendarsSection() {
         setGoogleBusy(false);
       }
     })();
-  }, [response, request]);
+  }, [response]);
 
   const [appleId, setAppleId] = useState('');
   const [applePassword, setApplePassword] = useState('');
@@ -575,7 +588,19 @@ function ConnectedCalendarsSection() {
             <PrimaryButton
               label={googleBusy ? 'Syncing…' : google.connected ? 'Sync Now' : 'Connect'}
               color={theme.colors.calDk}
-              onPress={() => (google.connected ? syncGoogleNow() : promptAsync())}
+              onPress={() => {
+                if (google.connected) {
+                  syncGoogleNow();
+                } else if (Platform.OS === 'web') {
+                  if (!request) {
+                    notify('Still loading', 'Give it a moment and try again.');
+                    return;
+                  }
+                  startWebRedirectAuth(request);
+                } else {
+                  promptAsync();
+                }
+              }}
             />
           </View>
         ) : (

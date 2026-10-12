@@ -26,7 +26,7 @@
 // that used to bridge it was removed) — use the web build or a dev build.
 import { useEffect } from 'react';
 import * as Google from 'expo-auth-session/providers/google';
-import { ResponseType } from 'expo-auth-session';
+import { AuthRequest, ResponseType } from 'expo-auth-session';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { CalendarEvent, GoogleCalendarSummary } from '../store/types';
@@ -137,6 +137,80 @@ export function useGoogleAuthRequest() {
   }, [request?.clientId, request?.redirectUri]);
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Web sign-in: full-page redirect, not a popup
+// ---------------------------------------------------------------------------
+// expo-auth-session's default web flow opens Google's sign-in in a popup and
+// waits for it to either postMessage back (success) or close (fallback,
+// detected by polling `.closed`). Both of those depend on the popup keeping
+// a working `window.opener` link back to this page. Once the popup visits
+// accounts.google.com, Chrome's Cross-Origin-Opener-Policy on Google's own
+// page can permanently sever that link — even after the popup navigates
+// back to our own origin. When that happens the postMessage never arrives,
+// and the only thing the opener can still observe is "the popup closed"
+// (response.type 'dismiss'), with no way to recover the actual result —
+// confirmed happening on this project's real OAuth client, not theoretical.
+//
+// A full-page redirect sidesteps the whole problem: there's no second
+// window, so nothing depends on window.opener. startWebRedirectAuth begins
+// it; consumeWebRedirectAuthResult (called once on mount) picks it back up
+// after Google sends the user back here. Native is unaffected — it never
+// used this popup path to begin with.
+const WEB_REDIRECT_VERIFIER_KEY = 'roost.google.pendingCodeVerifier';
+const WEB_REDIRECT_STATE_KEY = 'roost.google.pendingState';
+
+export function startWebRedirectAuth(request: AuthRequest): void {
+  if (!request.url) throw new Error('Google sign-in is still loading — wait a moment and try again.');
+  if (request.codeVerifier) window.localStorage.setItem(WEB_REDIRECT_VERIFIER_KEY, request.codeVerifier);
+  window.localStorage.setItem(WEB_REDIRECT_STATE_KEY, request.state);
+  window.location.href = request.url;
+}
+
+/** Call once on mount. If the current URL is Google sending the user back
+ * (a `code`/`state` or `error` query param), consumes it — clearing both the
+ * URL and the stashed verifier/state so a page refresh doesn't replay it —
+ * and returns the result. Returns null if there's nothing to consume. */
+export function consumeWebRedirectAuthResult():
+  | { type: 'success'; code: string; codeVerifier: string }
+  | { type: 'error'; message: string }
+  | null {
+  if (Platform.OS !== 'web') return null;
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const error = params.get('error');
+  const state = params.get('state');
+  if (!code && !error) return null;
+
+  const cleanUp = () => {
+    window.localStorage.removeItem(WEB_REDIRECT_VERIFIER_KEY);
+    window.localStorage.removeItem(WEB_REDIRECT_STATE_KEY);
+    window.history.replaceState(null, '', window.location.pathname);
+  };
+  const expectedState = window.localStorage.getItem(WEB_REDIRECT_STATE_KEY);
+
+  if (error) {
+    cleanUp();
+    return { type: 'error', message: params.get('error_description') ?? error };
+  }
+  if (!expectedState || state !== expectedState) {
+    cleanUp();
+    return {
+      type: 'error',
+      message: 'This sign-in response didn’t match the request that started it — please try Connect again.',
+    };
+  }
+  if (!code) {
+    cleanUp();
+    return { type: 'error', message: 'Sign-in response was missing its authorization code — please try Connect again.' };
+  }
+  const codeVerifier = window.localStorage.getItem(WEB_REDIRECT_VERIFIER_KEY);
+  cleanUp();
+  if (!codeVerifier) {
+    return { type: 'error', message: 'Missing this sign-in’s verifier — please try Connect again.' };
+  }
+  return { type: 'success', code, codeVerifier };
 }
 
 // ---------------------------------------------------------------------------
