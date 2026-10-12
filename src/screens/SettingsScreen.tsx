@@ -412,18 +412,26 @@ function ConnectedCalendarsSection() {
       notify('Google sign-in failed', result.message);
       return;
     }
+    const redirectUri = `${window.location.origin}${window.location.pathname}`;
     (async () => {
       setGoogleBusy(true);
       try {
-        const t = await exchangeGoogleCode({
-          code: result.code,
-          codeVerifier: result.codeVerifier,
-          redirectUri: `${window.location.origin}${window.location.pathname}`,
-        });
+        const t = await exchangeGoogleCode({ code: result.code, codeVerifier: result.codeVerifier, redirectUri });
         setGoogleAuth({ refreshToken: t.refreshToken, accessToken: t.accessToken, expiresAt: t.expiresAt });
         await finishGoogleConnect(t.accessToken);
       } catch (err: any) {
-        notify('Google sign-in failed', String(err?.message ?? err));
+        // Surfaced directly in the error popup (not just the console) since
+        // the full-page redirect this runs after makes DevTools' Network tab
+        // easy to lose (it clears on navigation unless "Preserve log" was
+        // already on) — this way the exact values are right there to compare
+        // against Google Cloud Console (and against each other) without
+        // digging for them.
+        notify(
+          'Google sign-in failed',
+          `${String(err?.message ?? err)}\n\n` +
+            `Sent to Google just now (exchange): ${redirectUri}\n` +
+            `Used to start sign-in (authorize): ${result.originalRedirectUri ?? '(missing)'}`,
+        );
       } finally {
         setGoogleBusy(false);
       }

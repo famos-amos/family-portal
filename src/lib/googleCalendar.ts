@@ -160,11 +160,16 @@ export function useGoogleAuthRequest() {
 // used this popup path to begin with.
 const WEB_REDIRECT_VERIFIER_KEY = 'roost.google.pendingCodeVerifier';
 const WEB_REDIRECT_STATE_KEY = 'roost.google.pendingState';
+const WEB_REDIRECT_URI_KEY = 'roost.google.pendingRedirectUri';
 
 export function startWebRedirectAuth(request: AuthRequest): void {
   if (!request.url) throw new Error('Google sign-in is still loading — wait a moment and try again.');
   if (request.codeVerifier) window.localStorage.setItem(WEB_REDIRECT_VERIFIER_KEY, request.codeVerifier);
   window.localStorage.setItem(WEB_REDIRECT_STATE_KEY, request.state);
+  // Stashed purely as a debugging aid — consumeWebRedirectAuthResult hands
+  // this back so the caller can compare it against whatever it reconstructs
+  // for the token exchange, in case those two ever diverge.
+  window.localStorage.setItem(WEB_REDIRECT_URI_KEY, request.redirectUri);
   window.location.href = request.url;
 }
 
@@ -173,7 +178,7 @@ export function startWebRedirectAuth(request: AuthRequest): void {
  * URL and the stashed verifier/state so a page refresh doesn't replay it —
  * and returns the result. Returns null if there's nothing to consume. */
 export function consumeWebRedirectAuthResult():
-  | { type: 'success'; code: string; codeVerifier: string }
+  | { type: 'success'; code: string; codeVerifier: string; originalRedirectUri: string | null }
   | { type: 'error'; message: string }
   | null {
   if (Platform.OS !== 'web') return null;
@@ -183,9 +188,11 @@ export function consumeWebRedirectAuthResult():
   const state = params.get('state');
   if (!code && !error) return null;
 
+  const originalRedirectUri = window.localStorage.getItem(WEB_REDIRECT_URI_KEY);
   const cleanUp = () => {
     window.localStorage.removeItem(WEB_REDIRECT_VERIFIER_KEY);
     window.localStorage.removeItem(WEB_REDIRECT_STATE_KEY);
+    window.localStorage.removeItem(WEB_REDIRECT_URI_KEY);
     window.history.replaceState(null, '', window.location.pathname);
   };
   const expectedState = window.localStorage.getItem(WEB_REDIRECT_STATE_KEY);
@@ -210,7 +217,7 @@ export function consumeWebRedirectAuthResult():
   if (!codeVerifier) {
     return { type: 'error', message: 'Missing this sign-in’s verifier — please try Connect again.' };
   }
-  return { type: 'success', code, codeVerifier };
+  return { type: 'success', code, codeVerifier, originalRedirectUri };
 }
 
 // ---------------------------------------------------------------------------
