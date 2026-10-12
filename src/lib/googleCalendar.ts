@@ -78,21 +78,35 @@ export function useGoogleAuthRequest() {
   // Pass '' (not undefined) for any id that's missing — the provider throws on
   // `undefined`, and the Connect button is gated on isGoogleConfigured() so
   // promptAsync() never actually runs while a needed id is absent.
-  const result = Google.useAuthRequest({
-    webClientId: realId(e.googleOAuthClientIdWeb) ?? '',
-    iosClientId: realId(e.googleOAuthClientIdIos) ?? '',
-    androidClientId: realId(e.googleOAuthClientIdAndroid) ?? '',
-    scopes: SCOPES,
-    responseType: ResponseType.Code,
-    // `offline` asks for a refresh token; `consent` forces Google to actually
-    // return one every time (it otherwise only does so on the very first
-    // authorisation for a given user + client).
-    extraParams: { access_type: 'offline', prompt: 'consent' },
-    // Native installed-app clients can redeem the code on-device with no
-    // secret, so let the provider do it. The web build can't (secret needed),
-    // so it keeps the raw code and hands it to the backend below.
-    shouldAutoExchangeCode: Platform.OS !== 'web',
-  });
+  const result = Google.useAuthRequest(
+    {
+      webClientId: realId(e.googleOAuthClientIdWeb) ?? '',
+      iosClientId: realId(e.googleOAuthClientIdIos) ?? '',
+      androidClientId: realId(e.googleOAuthClientIdAndroid) ?? '',
+      scopes: SCOPES,
+      responseType: ResponseType.Code,
+      // `offline` asks for a refresh token; `consent` forces Google to actually
+      // return one every time (it otherwise only does so on the very first
+      // authorisation for a given user + client).
+      extraParams: { access_type: 'offline', prompt: 'consent' },
+      // Native installed-app clients can redeem the code on-device with no
+      // secret, so let the provider do it. The web build can't (secret needed),
+      // so it keeps the raw code and hands it to the backend below.
+      shouldAutoExchangeCode: Platform.OS !== 'web',
+    },
+    // Without this, makeRedirectUri() on web resolves to just the bare
+    // origin (e.g. https://famos-amos.github.io) — not wherever this app is
+    // actually hosted (e.g. .../family-portal/, this repo's GitHub Pages
+    // path). Google would then redirect back to a URL nothing is served at
+    // (a 404) after a successful sign-in, so the app never gets the auth
+    // code at all. Read from app.json's experiments.baseUrl (the single
+    // source of truth for this path) rather than hardcoding it here. Only
+    // applied on web — native already redirects correctly via its own
+    // `scheme` (see app.json) and isn't affected by baseUrl.
+    Platform.OS === 'web' && Constants.expoConfig?.experiments?.baseUrl
+      ? { path: Constants.expoConfig.experiments.baseUrl.replace(/^\//, '') }
+      : undefined,
+  );
 
   // "Error 400: invalid_request / flowName=GeneralOAuthFlow" from Google almost
   // always means the exact `redirect_uri` below is not listed under this exact
