@@ -96,7 +96,7 @@ export function useGoogleAuthRequest() {
     },
     // Without this, makeRedirectUri() on web resolves to just the bare
     // origin (e.g. https://famos-amos.github.io) — not wherever this app is
-    // actually hosted (e.g. .../family-portal/, this repo's GitHub Pages
+    // actually hosted (e.g. .../family-portal, this repo's GitHub Pages
     // path). Google would then redirect back to a URL nothing is served at
     // (a 404) after a successful sign-in, so the app never gets the auth
     // code at all. Read from app.json's experiments.baseUrl (the single
@@ -104,18 +104,16 @@ export function useGoogleAuthRequest() {
     // applied on web — native already redirects correctly via its own
     // `scheme` (see app.json) and isn't affected by baseUrl.
     //
-    // The trailing slash matters, and not just cosmetically: GitHub Pages
-    // 301-redirects a path without one (/family-portal) to the version with
-    // one (/family-portal/) — and expo-web-browser's popup flow completes
-    // sign-in by comparing the URL it lands on against the exact redirect
-    // URL it was given. If those differ by even that slash (because Google
-    // sent it to the no-slash URL and GitHub Pages then redirected it), that
-    // comparison silently fails and the app never finds out sign-in
-    // succeeded — the popup closes, Google's side is done, but `response`
-    // stays null forever. Asking for the slash-terminated URL up front
-    // means there's no extra redirect to lose that signal in.
+    // Deliberately NOT trying to force a trailing slash here (an earlier
+    // version of this comment did) — expo-web-browser's web createURL()
+    // strips any trailing slash unconditionally, so this always resolves to
+    // the no-slash form regardless. That's fine: GitHub Pages' own
+    // redirect-to-add-a-slash only matters if something re-derives the
+    // redirect URI from the browser's address bar *after* that redirect
+    // happens, which is exactly the mistake the token exchange no longer
+    // makes (see consumeWebRedirectAuthResult's originalRedirectUri below).
     Platform.OS === 'web' && Constants.expoConfig?.experiments?.baseUrl
-      ? { path: `${Constants.expoConfig.experiments.baseUrl.replace(/^\/|\/$/g, '')}/` }
+      ? { path: Constants.expoConfig.experiments.baseUrl.replace(/^\/|\/$/g, '') }
       : undefined,
   );
 

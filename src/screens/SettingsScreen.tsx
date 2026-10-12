@@ -412,7 +412,17 @@ function ConnectedCalendarsSection() {
       notify('Google sign-in failed', result.message);
       return;
     }
-    const redirectUri = `${window.location.origin}${window.location.pathname}`;
+    // Must be the EXACT string actually sent to Google in step 1, not
+    // something re-derived from the browser's current address bar — proven
+    // live on this project's real OAuth client: GitHub Pages 301-redirects
+    // the no-trailing-slash URL Google was given to a slash-terminated one,
+    // so by the time this page reloads, window.location has a trailing
+    // slash that was never actually part of the original request. Sending
+    // that mismatched slash to Google's token endpoint is exactly what
+    // caused the redirect_uri_mismatch error here. originalRedirectUri is
+    // the one startWebRedirectAuth stashed before leaving for Google, so
+    // it's guaranteed to be identical regardless of any redirect in between.
+    const redirectUri = result.originalRedirectUri ?? `${window.location.origin}${window.location.pathname}`;
     (async () => {
       setGoogleBusy(true);
       try {
@@ -420,18 +430,7 @@ function ConnectedCalendarsSection() {
         setGoogleAuth({ refreshToken: t.refreshToken, accessToken: t.accessToken, expiresAt: t.expiresAt });
         await finishGoogleConnect(t.accessToken);
       } catch (err: any) {
-        // Surfaced directly in the error popup (not just the console) since
-        // the full-page redirect this runs after makes DevTools' Network tab
-        // easy to lose (it clears on navigation unless "Preserve log" was
-        // already on) — this way the exact values are right there to compare
-        // against Google Cloud Console (and against each other) without
-        // digging for them.
-        notify(
-          'Google sign-in failed',
-          `${String(err?.message ?? err)}\n\n` +
-            `Sent to Google just now (exchange): ${redirectUri}\n` +
-            `Used to start sign-in (authorize): ${result.originalRedirectUri ?? '(missing)'}`,
-        );
+        notify('Google sign-in failed', `${String(err?.message ?? err)}\n\nredirectUri used: ${redirectUri}`);
       } finally {
         setGoogleBusy(false);
       }
