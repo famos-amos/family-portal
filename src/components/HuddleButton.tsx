@@ -9,7 +9,6 @@
 // action with its own Confirm/Reject → Done, or Try Again to re-record.
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { useTheme } from '../theme/ThemeProvider';
 import { notify } from '../lib/alerts';
@@ -19,7 +18,6 @@ type Phase = 'idle' | 'recording' | 'analyzing' | 'reviewing' | 'error';
 
 export function HuddleButton() {
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [phase, setPhase] = useState<Phase>('idle');
   const [reviewItems, setReviewItems] = useState<ReviewableAction[]>([]);
@@ -137,6 +135,37 @@ export function HuddleButton() {
         </Text>
       </Pressable>
 
+      {/* A big, unmissable overlay while recording/analyzing — the pill's own
+          label changing is too easy to miss (small text, top corner), which
+          matters a lot for kids and on smaller screens. This is purely
+          visual (pointerEvents="box-none" on every layer except the Cancel
+          button itself) so the press-and-hold on the pill underneath keeps
+          working exactly as before — your finger never actually has to touch
+          this overlay to keep recording. */}
+      {(recording || analyzing) && (
+        <View pointerEvents="box-none" style={styles.talkOverlay}>
+          <Animated.View
+            style={[
+              styles.talkOverlayCircle,
+              { backgroundColor: recording ? theme.colors.danger : theme.colors.ink, transform: [{ scale: pulse }] },
+            ]}
+          >
+            {analyzing ? <ActivityIndicator color="#fff" size="large" /> : <Text style={styles.talkOverlayIcon}>🎙️</Text>}
+          </Animated.View>
+          <Text style={[styles.talkOverlayTitle, { fontFamily: theme.fonts.head }]}>
+            {recording ? 'Listening…' : 'Thinking…'}
+          </Text>
+          <Text style={[styles.talkOverlaySubtitle, { fontFamily: theme.fonts.bodySemiBold }]}>
+            {recording ? 'Keep holding Talk — let go when you’re done' : 'Figuring out what to do with that…'}
+          </Text>
+          {recording && (
+            <Pressable onPress={cancelRecording} style={styles.talkOverlayCancelBtn}>
+              <Text style={[styles.talkOverlayCancelText, { fontFamily: theme.fonts.headSemiBold }]}>Cancel</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+
       <Modal visible={phase === 'reviewing'} transparent animationType="fade" onRequestClose={tryAgain}>
         <View style={styles.modalBackdrop}>
           <View style={[styles.modalCard, { backgroundColor: theme.colors.panel }]}>
@@ -218,15 +247,6 @@ export function HuddleButton() {
           </View>
         </View>
       </Modal>
-
-      {/* An explicit cancel target while recording — releasing the button
-          normally stops+analyzes, but a slower long-press flow benefits from
-          a visible "stop without sending" escape hatch too. */}
-      {recording && (
-        <Pressable onPress={cancelRecording} style={[styles.cancelHint, { top: insets.top + 64 }]}>
-          <Text style={styles.cancelHintText}>Tap here to cancel</Text>
-        </Pressable>
-      )}
     </>
   );
 }
@@ -249,8 +269,41 @@ const styles = StyleSheet.create({
   },
   fabIcon: { fontSize: 17 },
   fabLabel: { fontSize: 13, fontWeight: '700' },
-  cancelHint: { position: 'absolute', right: 24, alignItems: 'center' },
-  cancelHintText: { color: '#fff', fontSize: 11, backgroundColor: '#00000090', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
+  talkOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#000000A0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  talkOverlayCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+  talkOverlayIcon: { fontSize: 52 },
+  talkOverlayTitle: { fontSize: 30, color: '#fff', marginBottom: 8 },
+  talkOverlaySubtitle: { fontSize: 15, color: '#ffffffd0', textAlign: 'center', marginBottom: 24 },
+  talkOverlayCancelBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: '#ffffff60',
+  },
+  talkOverlayCancelText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   modalBackdrop: { flex: 1, backgroundColor: '#00000050', alignItems: 'center', justifyContent: 'center' },
   modalCard: { width: 460, maxWidth: '92%', borderRadius: 24, padding: 22 },
   reviewRow: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, padding: 12, marginBottom: 8 },
