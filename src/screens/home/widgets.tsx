@@ -116,7 +116,11 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
         ]}
       />
       <View style={styles.calTitleRow}>
-        <Pressable onPress={() => navigate(-1)} style={[styles.calNavBtn, wide && styles.calNavBtnWide]} hitSlop={6}>
+        <Pressable
+          onPress={() => navigate(-1)}
+          style={[styles.calNavBtn, wide && styles.calNavBtnWide, { backgroundColor: theme.colors.fieldBg }]}
+          hitSlop={6}
+        >
           <ChevronLeftIcon size={wide ? 13 : 10} color={theme.colors.ink} />
         </Pressable>
         <Text
@@ -132,7 +136,11 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
         >
           {titleText}
         </Text>
-        <Pressable onPress={() => navigate(1)} style={[styles.calNavBtn, wide && styles.calNavBtnWide]} hitSlop={6}>
+        <Pressable
+          onPress={() => navigate(1)}
+          style={[styles.calNavBtn, wide && styles.calNavBtnWide, { backgroundColor: theme.colors.fieldBg }]}
+          hitSlop={6}
+        >
           <ChevronRightIcon size={wide ? 13 : 10} color={theme.colors.ink} />
         </Pressable>
       </View>
@@ -166,7 +174,13 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
                       onPress={() => navigation.navigate('Calendar')}
                       style={[
                         styles.calCell,
-                        { backgroundColor: isToday ? theme.colors.panel : theme.isDark ? '#FFFFFF0A' : '#FFFFFFA8' },
+                        // The card itself is plain white now (not the pale
+                        // blue tint it used to be — see backgroundFor in
+                        // HomeScreen.tsx), so "today" needs an actual color
+                        // to stand out and regular cells need a visible-on-
+                        // white tint instead of a translucent white that
+                        // used to pop against a colored card.
+                        { backgroundColor: isToday ? theme.colors.calBg : theme.isDark ? '#FFFFFF0A' : theme.colors.fieldBg },
                         isToday && { borderWidth: 2, borderColor: theme.colors.cal },
                         !inMonth && { opacity: 0.35 },
                       ]}
@@ -209,7 +223,7 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
                 onPress={() => navigation.navigate('Calendar', { view: 'day', date: iso, ts: Date.now() })}
                 style={[
                   styles.weekAgendaRow,
-                  { backgroundColor: isToday ? theme.colors.panel : theme.isDark ? '#FFFFFF0A' : '#FFFFFFA8' },
+                  { backgroundColor: isToday ? theme.colors.calBg : theme.isDark ? '#FFFFFF0A' : theme.colors.fieldBg },
                   isToday && { borderWidth: 2, borderColor: theme.colors.cal },
                 ]}
               >
@@ -302,7 +316,23 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
 
   return (
     <Pressable onPress={openTodayInCalendar} style={{ flex: 1, minHeight: 0 }}>
-      <SectionTitle icon={<CalendarIcon size={17} color={theme.colors.ink} />}>Today's Events</SectionTitle>
+      <SectionTitle
+        icon={<CalendarIcon size={17} color={theme.colors.ink} />}
+        right={
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={[styles.countBadge, { backgroundColor: theme.colors.calDk + '26' }]}>
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 11.5, color: theme.colors.calDk }}>
+                {todays.length}
+              </Text>
+            </View>
+            <View style={[styles.eventsArrowBtn, { backgroundColor: theme.isDark ? '#FFFFFF1A' : '#FFFFFFB0' }]}>
+              <ChevronRightIcon size={12} color={theme.colors.calDk} />
+            </View>
+          </View>
+        }
+      >
+        Today's Events
+      </SectionTitle>
       {todays.length === 0 && (
         <Text style={{ color: theme.colors.inkSoft, fontFamily: theme.fonts.body, fontSize: 13 }}>
           Nothing on the calendar today.
@@ -406,11 +436,23 @@ export function TodoWidgetContent() {
   const allItems = useBoardsStore((s) => s.items);
   const toggle = useBoardsStore((s) => s.toggleItem);
   const items = allItems.filter((i) => i.columnId === 'todo');
+  const leftCount = items.filter((i) => !i.done).length;
 
   return (
     <View style={{ flex: 1, minHeight: 0 }}>
       <Pressable onPress={() => navigation.navigate('Boards')}>
-        <SectionTitle icon={<ChoresIcon size={17} color={theme.colors.ink} />}>To Do</SectionTitle>
+        <SectionTitle
+          icon={<ChoresIcon size={17} color={theme.colors.ink} />}
+          right={
+            <View style={[styles.countBadge, { backgroundColor: theme.colors.boardsDk + '26' }]}>
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 11.5, color: theme.colors.boardsDk }}>
+                {leftCount} left
+              </Text>
+            </View>
+          }
+        >
+          To Do
+        </SectionTitle>
       </Pressable>
       <ScrollView style={{ flex: 1, minHeight: 0 }} showsVerticalScrollIndicator={false}>
         {items.map((item) => (
@@ -697,17 +739,50 @@ export function ChoresWidgetContent() {
     })
     .filter((x) => x.total > 0);
 
-  // Bigger rings + type on the wide/desktop dashboard — the fixed 60px ring
-  // this card shipped with reads as tiny on a 14"+ display.
-  const ringSize = wide ? 92 : 60;
-  const ringStroke = wide ? 10 : 7;
+  // Bigger rings + type on the wide/desktop dashboard than the stacked
+  // mobile layout — but not so big they outgrow the card's actual height
+  // (this row is the shortest of the 3 dashboard rows). 92px rings used to
+  // spill past the card's bottom edge once name + stars text were added
+  // above/below them.
+  const ringSize = wide ? 72 : 54;
+  const ringStroke = wide ? 8 : 6;
+
+  const totalDone = withChores.reduce((sum, x) => sum + x.done, 0);
+  const totalAll = withChores.reduce((sum, x) => sum + x.total, 0);
+  const weekProgress = wide ? (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View style={[styles.weekTrack, { backgroundColor: theme.isDark ? '#FFFFFF20' : '#00000014' }]}>
+        <View
+          style={[
+            styles.weekTrackFill,
+            { width: `${totalAll ? (totalDone / totalAll) * 100 : 0}%`, backgroundColor: theme.colors.accent },
+          ]}
+        />
+        <View
+          style={[
+            styles.weekTrackThumb,
+            {
+              left: `${totalAll ? (totalDone / totalAll) * 100 : 0}%`,
+              backgroundColor: theme.colors.accent,
+              borderColor: theme.colors.panel,
+            },
+          ]}
+        />
+      </View>
+      <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.inkSoft }}>
+        {totalDone}/{totalAll}
+      </Text>
+    </View>
+  ) : undefined;
 
   return (
     <Pressable onPress={() => navigation.navigate('Chores')} style={{ flex: 1 }}>
-      <SectionTitle icon={<ChoresIcon size={wide ? 20 : 17} color={theme.colors.ink} />}>Chores</SectionTitle>
-      <View style={{ flexDirection: 'row', gap: wide ? 24 : 18 }}>
+      <SectionTitle icon={<ChoresIcon size={wide ? 20 : 17} color={theme.colors.ink} />} right={weekProgress}>
+        Chores
+      </SectionTitle>
+      <View style={{ flexDirection: 'row', gap: wide ? 18 : 14 }}>
         {withChores.map(({ member, total, done, stars }) => (
-          <View key={member.id} style={{ flex: 1, alignItems: 'center', gap: wide ? 8 : 6 }}>
+          <View key={member.id} style={{ flex: 1, alignItems: 'center', gap: wide ? 5 : 4 }}>
             <Text style={{ fontFamily: theme.fonts.head, fontSize: wide ? 16 : 13, color: member.color }}>
               {member.name}
             </Text>
@@ -736,6 +811,21 @@ export function ChoresWidgetContent() {
 }
 
 const styles = StyleSheet.create({
+  countBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
+  eventsArrowBtn: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  // Aggregate "this week" progress indicator in the Chores card header — a
+  // styled track, not an actual draggable control (there's nothing to drag
+  // to; it's a read-only visualization of totalDone/totalAll).
+  weekTrack: { width: 120, height: 6, borderRadius: 3, justifyContent: 'center' },
+  weekTrackFill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 3 },
+  weekTrackThumb: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+    marginLeft: -7,
+  },
   calTitleRow: { marginBottom: 2, flexDirection: 'row', alignItems: 'center' },
   calNavBtn: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#ffffffb0', alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   calNavBtnWide: { width: 24, height: 24, borderRadius: 12 },

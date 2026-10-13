@@ -19,7 +19,8 @@ import { EditIcon, PlusIcon, TrashIcon } from '../components/icons';
 import { useFamilyStore, useCalendarStore, useSettingsStore, useAppLockStore } from '../store/useAppStore';
 import { hashPin, isValidPin, PIN_LENGTH } from '../lib/pin';
 import { personColorOptions } from '../theme/colors';
-import { FamilyMember, ThemePreference } from '../store/types';
+import { FamilyMember, PaletteSeed, ThemePreference } from '../store/types';
+import { CUSTOM_SWATCH_OPTIONS, PALETTE_PRESETS, paletteSwatchDots } from '../lib/paletteColors';
 import { confirmAction, notify } from '../lib/alerts';
 import {
   consumeWebRedirectAuthResult,
@@ -306,10 +307,18 @@ function MemberRow({
 // ---------------------------------------------------------------------------
 // Appearance
 // ---------------------------------------------------------------------------
+const UI_SCALE_STEPS = [0.9, 1, 1.1, 1.2, 1.3];
+
 function AppearanceSection() {
   const theme = useTheme();
   const themePreference = useSettingsStore((s) => s.theme);
   const setTheme = useSettingsStore((s) => s.setTheme);
+  const paletteId = useSettingsStore((s) => s.paletteId);
+  const setPaletteId = useSettingsStore((s) => s.setPaletteId);
+  const customPaletteSeed = useSettingsStore((s) => s.customPaletteSeed);
+  const setCustomPaletteColor = useSettingsStore((s) => s.setCustomPaletteColor);
+  const uiScale = useSettingsStore((s) => s.uiScale);
+  const setUiScale = useSettingsStore((s) => s.setUiScale);
 
   return (
     <View>
@@ -317,7 +326,7 @@ function AppearanceSection() {
       <Text style={[styles.sub, { fontFamily: theme.fonts.body, color: theme.colors.inkSoft }]}>
         Choose how Huddle looks on this tablet.
       </Text>
-      <View style={{ maxWidth: 420, marginTop: 6 }}>
+      <View style={{ maxWidth: 420, marginTop: 6, marginBottom: 24 }}>
         <SegmentedControl<ThemePreference>
           value={themePreference}
           onChange={setTheme}
@@ -328,7 +337,135 @@ function AppearanceSection() {
           ]}
         />
       </View>
+
+      <Text style={[styles.fieldLabel, { fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }]}>
+        Color Theme
+      </Text>
+      <Text style={{ fontFamily: theme.fonts.body, fontSize: 11.5, color: theme.colors.inkSoft, marginBottom: 12 }}>
+        Picks the colors for Calendar, Meals, Chores, Boards and Verse — separate from Light/Dark above.
+      </Text>
+      <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
+        {PALETTE_PRESETS.map((preset) => (
+          <PaletteOptionCard
+            key={preset.id}
+            label={preset.label}
+            dots={paletteSwatchDots(preset.id, customPaletteSeed)}
+            active={paletteId === preset.id}
+            onPress={() => setPaletteId(preset.id)}
+          />
+        ))}
+        <PaletteOptionCard
+          label="Custom"
+          dots={paletteSwatchDots('custom', customPaletteSeed)}
+          active={paletteId === 'custom'}
+          onPress={() => setPaletteId('custom')}
+        />
+      </View>
+
+      {paletteId === 'custom' && (
+        <View style={[styles.customPaletteBox, { backgroundColor: theme.colors.fieldBg }]}>
+          {CUSTOM_PALETTE_FIELDS.map((field) => (
+            <View key={field.key} style={{ marginBottom: 14 }}>
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.ink, marginBottom: 8 }}>
+                {field.label}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                {CUSTOM_SWATCH_OPTIONS.map((c) => (
+                  <Pressable
+                    key={c}
+                    onPress={() => setCustomPaletteColor(field.key, c)}
+                    style={[
+                      styles.swatch,
+                      { backgroundColor: c },
+                      customPaletteSeed[field.key] === c && { borderWidth: 3, borderColor: theme.colors.ink },
+                    ]}
+                  />
+                ))}
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <Text style={[styles.fieldLabel, { fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }]}>
+        Size
+      </Text>
+      <Text style={{ fontFamily: theme.fonts.body, fontSize: 11.5, color: theme.colors.inkSoft, marginBottom: 12 }}>
+        Zooms the whole app — larger fonts and bigger cards, handy for reading from across the room.
+      </Text>
+      <View style={{ flexDirection: 'row', gap: 10 }}>
+        {UI_SCALE_STEPS.map((step) => {
+          const active = Math.abs(uiScale - step) < 0.01;
+          return (
+            <Pressable
+              key={step}
+              onPress={() => setUiScale(step)}
+              style={[
+                styles.scaleStep,
+                { backgroundColor: theme.colors.fieldBg, borderColor: active ? theme.colors.ink : 'transparent' },
+              ]}
+            >
+              <Text
+                style={{
+                  fontFamily: active ? theme.fonts.headSemiBold : theme.fonts.bodySemiBold,
+                  fontSize: 13,
+                  color: active ? theme.colors.ink : theme.colors.inkSoft,
+                }}
+              >
+                {Math.round(step * 100)}%
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
+  );
+}
+
+const CUSTOM_PALETTE_FIELDS: { key: keyof PaletteSeed; label: string }[] = [
+  { key: 'cal', label: 'Calendar' },
+  { key: 'meal', label: 'Meals' },
+  { key: 'chores', label: 'Chores' },
+  { key: 'boards', label: 'Boards' },
+  { key: 'verse', label: 'Verse' },
+  { key: 'accent', label: 'Accent (sidebar + buttons)' },
+];
+
+function PaletteOptionCard({
+  label,
+  dots,
+  active,
+  onPress,
+}: {
+  label: string;
+  dots: string[];
+  active: boolean;
+  onPress: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.paletteCard,
+        { backgroundColor: theme.colors.fieldBg, borderColor: active ? theme.colors.ink : 'transparent' },
+      ]}
+    >
+      <View style={{ flexDirection: 'row', gap: 4, marginBottom: 8 }}>
+        {dots.map((d, i) => (
+          <View key={i} style={[styles.paletteDot, { backgroundColor: d }]} />
+        ))}
+      </View>
+      <Text
+        style={{
+          fontFamily: active ? theme.fonts.headSemiBold : theme.fonts.bodySemiBold,
+          fontSize: 12.5,
+          color: active ? theme.colors.ink : theme.colors.inkSoft,
+        }}
+      >
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -1280,6 +1417,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   brightnessStep: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: 'transparent' },
+  paletteCard: { width: 108, padding: 12, borderRadius: 14, borderWidth: 2 },
+  paletteDot: { width: 14, height: 14, borderRadius: 7 },
+  customPaletteBox: { borderRadius: 14, padding: 16, marginBottom: 24 },
+  scaleStep: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, borderWidth: 2 },
   previewBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, borderWidth: 1.5, marginRight: 10 },
   previewHint: { position: 'absolute', top: 24, alignSelf: 'center' },
   previewHintText: {

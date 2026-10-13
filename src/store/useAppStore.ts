@@ -25,12 +25,15 @@ import {
   GoogleCalendarSummary,
   Meal,
   MealSuggestion,
+  PaletteId,
+  PaletteSeed,
   Recipe,
   SubscribedCalendar,
   ThemePreference,
   WidgetId,
   WidgetSize,
 } from './types';
+import { CLASSIC_SEED } from '../lib/paletteColors';
 
 const storage = createJSONStorage(() => AsyncStorage);
 
@@ -1146,6 +1149,21 @@ type SettingsState = {
   theme: ThemePreference;
   setTheme: (t: ThemePreference) => void;
 
+  /** Which color palette drives cal/meal/chores/boards/verse/accent —
+   * independent of `theme` (light/dark/system is only the surface mode).
+   * See src/lib/paletteColors.ts. */
+  paletteId: PaletteId;
+  setPaletteId: (id: PaletteId) => void;
+  /** Only used when paletteId === 'custom' — one seed hex per section, set
+   * via the color pickers in Settings → Appearance. */
+  customPaletteSeed: PaletteSeed;
+  setCustomPaletteColor: (key: keyof PaletteSeed, hex: string) => void;
+
+  /** Global UI zoom — 1 = 100% (default). Scales fonts and card sizes
+   * app-wide via UiScaleWrapper, not per-component. */
+  uiScale: number;
+  setUiScale: (n: number) => void;
+
   hiddenPersonIds: string[];
   togglePersonVisibility: (personId: string) => void;
 
@@ -1212,6 +1230,15 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       theme: 'system',
       setTheme: (theme) => set({ theme }),
+
+      paletteId: 'classic',
+      setPaletteId: (paletteId) => set({ paletteId }),
+      customPaletteSeed: CLASSIC_SEED,
+      setCustomPaletteColor: (key, hex) =>
+        set((s) => ({ customPaletteSeed: { ...s.customPaletteSeed, [key]: hex } })),
+
+      uiScale: 1,
+      setUiScale: (uiScale) => set({ uiScale }),
 
       hiddenPersonIds: [],
       togglePersonVisibility: (personId) =>

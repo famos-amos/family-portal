@@ -12,6 +12,7 @@ import { hydrateAllStores, useAppLockStore, useSettingsStore } from './src/store
 import { LockScreen } from './src/screens/LockScreen';
 import { AmbientScreen } from './src/screens/AmbientScreen';
 import { HuddleControls } from './src/components/HuddleControls';
+import { UiScaleWrapper } from './src/components/UiScaleWrapper';
 import { useIdleTimer } from './src/lib/useIdleTimer';
 import { applyNativeBrightness, restoreSystemBrightness } from './src/lib/brightness';
 
@@ -114,7 +115,10 @@ function AppShell() {
     // useIdleTimer). A touch anywhere, including on the screensaver itself
     // (rendered as a child below), bubbles up to this View and resets it.
     <View style={{ flex: 1 }} onTouchStart={resetIdleTimer}>
-      {locked ? <LockScreen /> : <RootNavigator />}
+      {/* The sidebar (wide/desktop layout) lives inside RootNavigator, not
+          here — it needs useNavigation()/useRoute(), which only work inside
+          NavigationContainer. */}
+      <UiScaleWrapper>{locked ? <LockScreen /> : <RootNavigator />}</UiScaleWrapper>
       {!locked && !showAmbient && <HuddleControls />}
       {showAmbient && <AmbientScreen />}
       <StatusBar style={theme.isDark ? 'light' : 'dark'} />

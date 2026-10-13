@@ -63,15 +63,13 @@ export function HomeScreen() {
 const SIZED_WIDGETS = new Set<WidgetId>(['calendar', 'events', 'meal']);
 const STACKED_ORDER: WidgetId[] = ['calendar', 'events', 'meal', 'todo', 'challenge', 'verse', 'chores'];
 
-// Reproduces the design's 3-column CSS grid —
-//   grid-template-columns: 340px 1fr 290px
-//   grid-template-rows: 1fr 1fr 1fr
-//   grid-template-areas: "cal events meal" "cal todo challenge" "verse chores chores"
-// — with nested flexbox rather than CSS grid so the exact same layout works
-// on native (Android tablet) as well as web. The three column widths below
-// (340 / 560 / 290 — widened from the original mockup's 270 / 622 / 300 to
-// give the calendar more room on larger displays) are used as flex ratios,
-// so columns line up between the top and bottom row groups.
+// Three equal-width columns, two equal-height rows, then Chores as its own
+// shorter full-width row underneath — matching the Material-leaning desktop
+// redesign exactly (see the reference mockup): "cal events meal" /
+// "verse todo challenge" / "chores chores chores", not the calendar-as-a-
+// tall-left-column layout this used to be. Chores spanning the full width
+// (not sharing its row with Verse) is also what gets its left edge flush
+// with the sidebar instead of stopping short.
 function DashboardGrid({
   sizes,
   setSize,
@@ -95,23 +93,17 @@ function DashboardGrid({
 
   return (
     <View style={styles.grid}>
-      {/* Rows 1–2: calendar (tall, left) · events/todo (middle) · meal/challenge (right) */}
-      <View style={[styles.gridRow, { flex: 2 }]}>
-        {cell('calendar', { flex: 340 })}
-        <View style={[styles.gridCol, { flex: 560 }]}>
-          {cell('events', { flex: 1 })}
-          {cell('todo', { flex: 1 })}
-        </View>
-        <View style={[styles.gridCol, { flex: 290 }]}>
-          {cell('meal', { flex: 1 })}
-          {cell('challenge', { flex: 1 })}
-        </View>
+      <View style={[styles.gridRow, { flex: 5 }]}>
+        {cell('calendar', { flex: 1 })}
+        {cell('events', { flex: 1 })}
+        {cell('meal', { flex: 1 })}
       </View>
-      {/* Row 3: verse (left, under calendar) · chores summary (spans the rest) */}
-      <View style={[styles.gridRow, { flex: 1 }]}>
-        {cell('verse', { flex: 340 })}
-        {cell('chores', { flex: 850 })}
+      <View style={[styles.gridRow, { flex: 5 }]}>
+        {cell('verse', { flex: 1 })}
+        {cell('todo', { flex: 1 })}
+        {cell('challenge', { flex: 1 })}
       </View>
+      <View style={[styles.gridRow, { flex: 4 }]}>{cell('chores', { flex: 1 })}</View>
     </View>
   );
 }
@@ -138,16 +130,19 @@ function renderWidget(id: WidgetId, size: any) {
 function backgroundFor(id: WidgetId, theme: ReturnType<typeof useTheme>) {
   switch (id) {
     case 'calendar':
+      return theme.colors.panel;
+    case 'events':
       return theme.colors.calBg;
     case 'meal':
       return theme.colors.mealBg;
     case 'todo':
-    case 'challenge':
       return theme.colors.boardsBg;
+    case 'challenge':
+      return theme.colors.choresBg;
     case 'verse':
       return theme.colors.verseBg;
     case 'chores':
-      return theme.colors.choresBg;
+      return theme.colors.choresWeekBg;
     default:
       return theme.colors.panel;
   }

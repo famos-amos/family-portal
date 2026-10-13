@@ -157,6 +157,25 @@ export type SubscribedCalendar = {
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 
+/** Which color palette drives the section colors (calendar/meals/chores/
+ * boards/verse/accent) — independent of ThemePreference, which only picks
+ * light vs dark surfaces. 'classic' keeps the app's original hand-tuned
+ * colors exactly; the rest (including 'custom') are generated from a single
+ * seed hex per section — see src/lib/paletteColors.ts. */
+export type PaletteId = 'classic' | 'ocean' | 'sunset' | 'forest' | 'berry' | 'custom';
+
+/** One seed hex per themeable section, used to derive that section's actual
+ * card/background/text shades (see deriveSectionShades). This is what the
+ * "Custom" palette lets the user set directly, one color picker per key. */
+export type PaletteSeed = {
+  cal: string;
+  meal: string;
+  chores: string;
+  boards: string;
+  verse: string;
+  accent: string;
+};
+
 export type WidgetId =
   | 'calendar'
   | 'events'

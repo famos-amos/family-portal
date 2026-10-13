@@ -23,6 +23,22 @@ export type ColorScheme = {
   boardsDk: string;
   verse: string;
   verseBg: string;
+  // The full-width "Chores this week" bar at the bottom of the dashboard —
+  // a warm neutral tan here in Classic, deliberately NOT the same green as
+  // the per-person chore rings elsewhere (that's `chores`/`choresBg`, still
+  // used there). A non-Classic theme palette (see paletteColors.ts) DOES
+  // tie this to that palette's chosen "Chores" color, just at a different
+  // shade than choresBg — it's the only chores-colored surface the home
+  // dashboard actually shows, so leaving it untouched made picking a new
+  // Chores color look like it did nothing.
+  choresWeekBg: string;
+
+  // The one app-wide "primary" color — the sidebar's logo/add button and
+  // the active nav item, per the Material-leaning redesign (see
+  // Sidebar.tsx). Deliberately separate from cal/meal/chores/boards/verse,
+  // which stay each section's own color — this is chrome, not content.
+  accent: string;
+  accentBg: string;
 
   success: string;
   danger: string;
@@ -50,6 +66,10 @@ export const lightColors: ColorScheme = {
   boardsDk: '#A24D6E',
   verse: '#D9C7EC',
   verseBg: '#F5EFFB',
+  choresWeekBg: '#F3E6D3',
+
+  accent: '#C8673E',
+  accentBg: '#FBE4D7',
 
   success: '#3E8A62',
   danger: '#C0524B',
@@ -79,6 +99,10 @@ export const darkColors: ColorScheme = {
   boardsDk: '#E9A9C4',
   verse: '#A98BC9',
   verseBg: '#2E2836',
+  choresWeekBg: '#3A3226',
+
+  accent: '#E8956B',
+  accentBg: '#3A2A20',
 
   success: '#5CB37F',
   danger: '#D9756D',
