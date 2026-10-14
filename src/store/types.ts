@@ -162,7 +162,7 @@ export type ThemePreference = 'light' | 'dark' | 'system';
  * light vs dark surfaces. 'classic' keeps the app's original hand-tuned
  * colors exactly; the rest (including 'custom') are generated from a single
  * seed hex per section — see src/lib/paletteColors.ts. */
-export type PaletteId = 'classic' | 'ocean' | 'sunset' | 'forest' | 'berry' | 'custom';
+export type PaletteId = 'classic' | 'ocean' | 'sunset' | 'forest' | 'berry' | 'brights' | 'jewel' | 'custom';
 
 /** One seed hex per themeable section, used to derive that section's actual
  * card/background/text shades (see deriveSectionShades). This is what the

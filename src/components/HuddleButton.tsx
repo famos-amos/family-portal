@@ -1,12 +1,15 @@
 // The "Talk" voice button (internally still called Huddle — see the Gemini
 // pipeline this calls into) — a pill next to the Settings gear, top-right.
-// App.tsx mounts one global instance; press and hold to dictate calendar
-// events, reminders, chore completions, shopping-list items, or meal-plan
-// changes.
+// App.tsx mounts one global instance; tap once to start, then explicitly
+// Cancel or Done from the overlay — see the flow note on RECORDING_TIMEOUT_MS
+// below for why this isn't press-and-hold any more.
 //
-// Flow: press → record (pulsing mic + "Listening…") → release → stop →
-// upload to huddle-voice (Gemini) → review screen listing each proposed
-// action with its own Confirm/Reject → Done, or Try Again to re-record.
+// Flow: tap → record (pulsing mic + "Listening…", Cancel/Done buttons) →
+// Done (or the 30s auto-timeout) → stop → "Thinking…" → upload to
+// huddle-voice (Gemini) → review screen listing each proposed action with
+// its own Confirm/Reject → Done, or Try Again to re-record. Cancel at any
+// point during recording discards the clip and returns straight to idle —
+// no upload, no action taken.
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
@@ -16,6 +19,15 @@ import { analyzeHuddleRecording, applyVoiceAction, buildReviewableActions, Revie
 
 type Phase = 'idle' | 'recording' | 'analyzing' | 'reviewing' | 'error';
 
+// Recording auto-stops (same as pressing Done) after this long, so a tap
+// that's never followed up on doesn't leave the mic listening forever —
+// press-and-hold used to make the "when does this stop" question moot by
+// tying it to physical contact, which is exactly what felt wrong about it
+// (you had to keep your finger down the whole time, which isn't how a tap
+// button is supposed to work). A fixed cap replaces that without bringing
+// the hold-to-talk behavior back.
+const RECORDING_TIMEOUT_MS = 30000;
+
 export function HuddleButton() {
   const theme = useTheme();
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -24,6 +36,11 @@ export function HuddleButton() {
   const [transcript, setTranscript] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const pulse = useRef(new Animated.Value(1)).current;
+  // Guards against the 30s auto-timeout and a manual Done tap both firing
+  // stopAndAnalyze at nearly the same moment — both would otherwise read the
+  // same stale `phase` (React state updates aren't synchronous) and race
+  // past the `phase !== 'recording'` check together.
+  const stoppingRef = useRef(false);
 
   useEffect(() => {
     if (phase !== 'recording') {
@@ -40,6 +57,17 @@ export function HuddleButton() {
     return () => loop.stop();
   }, [phase, pulse]);
 
+  // Auto-stop (same as the user tapping Done) if nobody presses Cancel or
+  // Done within RECORDING_TIMEOUT_MS.
+  useEffect(() => {
+    if (phase !== 'recording') return;
+    const id = setTimeout(() => {
+      stopAndAnalyze();
+    }, RECORDING_TIMEOUT_MS);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
   const startRecording = async () => {
     if (phase !== 'idle') return;
     try {
@@ -51,6 +79,7 @@ export function HuddleButton() {
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync();
       recorder.record();
+      stoppingRef.current = false;
       setPhase('recording');
     } catch (err: any) {
       notify('Could not start recording', String(err?.message ?? err));
@@ -58,12 +87,13 @@ export function HuddleButton() {
   };
 
   const stopAndAnalyze = async () => {
-    if (phase !== 'recording') return;
+    if (phase !== 'recording' || stoppingRef.current) return;
+    stoppingRef.current = true;
     setPhase('analyzing');
     try {
       await recorder.stop();
       const uri = recorder.uri;
-      if (!uri) throw new Error('No recording was captured — try holding the button a little longer.');
+      if (!uri) throw new Error('No recording was captured — tap Talk and try again.');
       const result = await analyzeHuddleRecording(uri);
       setTranscript(result.transcript);
       const reviewable = buildReviewableActions(result.actions);
@@ -84,6 +114,8 @@ export function HuddleButton() {
   };
 
   const cancelRecording = async () => {
+    if (phase !== 'recording') return;
+    stoppingRef.current = true;
     try {
       await recorder.stop();
     } catch {
@@ -120,11 +152,13 @@ export function HuddleButton() {
     <>
       {/* Positioning (top-right, next to the Settings gear) is owned by the
           HuddleControls wrapper that renders this alongside SnapButton — this
-          pill is just a normal flex child here. */}
+          pill is just a normal flex child here. A single tap starts
+          recording — Cancel/Done on the overlay below are what stop it, not
+          releasing the button (see RECORDING_TIMEOUT_MS note up top for why
+          press-and-hold was replaced). */}
       <Pressable
-        onPressIn={startRecording}
-        onPressOut={stopAndAnalyze}
-        disabled={analyzing || phase === 'reviewing'}
+        onPress={startRecording}
+        disabled={phase !== 'idle'}
         style={[styles.fab, { backgroundColor: recording ? theme.colors.danger : theme.colors.ink }]}
       >
         <Animated.View style={{ transform: [{ scale: pulse }] }}>
@@ -144,10 +178,7 @@ export function HuddleButton() {
           top-right controls row, not the full screen — so it rendered
           tiny and off to the side. Modal sidesteps that entirely (it always
           portals above everything, full-screen, same as the reviewing/error
-          dialogs below) without needing any pointerEvents tricks: a touch
-          that started on the Talk pill keeps delivering its release event
-          to that pill even once this modal is layered on top, so
-          press-and-hold still works exactly the same. */}
+          dialogs below). */}
       <Modal visible={recording || analyzing} transparent animationType="fade">
         <View style={styles.talkOverlay}>
           <Animated.View
@@ -162,12 +193,22 @@ export function HuddleButton() {
             {recording ? 'Listening…' : 'Thinking…'}
           </Text>
           <Text style={[styles.talkOverlaySubtitle, { fontFamily: theme.fonts.bodySemiBold }]}>
-            {recording ? 'Keep holding Talk — let go when you’re done' : 'Figuring out what to do with that…'}
+            {recording ? 'Say what you need, then tap Done' : 'Figuring out what to do with that…'}
           </Text>
           {recording && (
-            <Pressable onPress={cancelRecording} style={styles.talkOverlayCancelBtn}>
-              <Text style={[styles.talkOverlayCancelText, { fontFamily: theme.fonts.headSemiBold }]}>Cancel</Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <Pressable onPress={cancelRecording} style={[styles.talkOverlayBtn, styles.talkOverlayCancelBtn]}>
+                <Text style={[styles.talkOverlayCancelText, { fontFamily: theme.fonts.headSemiBold }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={stopAndAnalyze}
+                style={[styles.talkOverlayBtn, styles.talkOverlayDoneBtn, { backgroundColor: theme.colors.panel }]}
+              >
+                <Text style={[styles.talkOverlayDoneText, { fontFamily: theme.fonts.headSemiBold, color: theme.colors.ink }]}>
+                  Done
+                </Text>
+              </Pressable>
+            </View>
           )}
         </View>
       </Modal>
@@ -298,14 +339,14 @@ const styles = StyleSheet.create({
   talkOverlayIcon: { fontSize: 52 },
   talkOverlayTitle: { fontSize: 30, color: '#fff', marginBottom: 8 },
   talkOverlaySubtitle: { fontSize: 15, color: '#ffffffd0', textAlign: 'center', marginBottom: 24 },
-  talkOverlayCancelBtn: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 999,
-    borderWidth: 1.5,
-    borderColor: '#ffffff60',
-  },
+  talkOverlayBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 999 },
+  talkOverlayCancelBtn: { borderWidth: 1.5, borderColor: '#ffffff60' },
   talkOverlayCancelText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  // Done is the primary action here (what you tap when you're actually
+  // finished talking) — solid/light so it reads as the default choice next
+  // to Cancel's plain outline.
+  talkOverlayDoneBtn: { shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
+  talkOverlayDoneText: { fontSize: 15, fontWeight: '700' },
   modalBackdrop: { flex: 1, backgroundColor: '#00000050', alignItems: 'center', justifyContent: 'center' },
   modalCard: { width: 460, maxWidth: '92%', borderRadius: 24, padding: 22 },
   reviewRow: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, padding: 12, marginBottom: 8 },

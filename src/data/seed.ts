@@ -2,6 +2,7 @@
 // Everything here is fully editable/removable from within the app (Settings,
 // and each screen's own add/remove controls) — nothing is hardcoded at runtime.
 import { BoardColumn, BoardItem, CalendarEvent, Chore, FamilyMember, Meal, MealSuggestion } from '../store/types';
+import { toIso } from '../lib/date';
 
 export const seedFamily: FamilyMember[] = [
   { id: 'mom', name: 'Mom', color: '#D98CA6', initials: 'M', birthday: '1988-04-12' },
@@ -88,7 +89,7 @@ export const seedBoardItems: BoardItem[] = [
 function isoDateInCurrentMonth(day: number): string {
   const now = new Date();
   const d = new Date(now.getFullYear(), now.getMonth(), day);
-  return d.toISOString().slice(0, 10);
+  return toIso(d);
 }
 
 export const seedEvents: CalendarEvent[] = [

@@ -67,33 +67,47 @@ function clampSaturation(s: number, floor: number, cap: number): number {
   return Math.max(Math.min(s, cap), floor);
 }
 
-/** One seed hex → the 4 shades a section actually needs: a soft pastel
- * "main" (card backgrounds/icons), a "bg" tint (widget card background —
- * kept visibly tinted rather than near-white, so it reads against the
- * page's own warm/neutral background), a saturated "dk" (text/icons that
- * need contrast on a light card), and "weekBg" (the full-width Chores bar's
- * tone — same hue, pulled slightly darker/more saturated than "bg" so a
- * large flat area still reads as colored, not washed out). Tuned by eye
- * against the existing hand-picked palette rather than any formal contrast
- * target. */
+/** One seed hex → the 4 shades a section actually needs: "main" (the card
+ * header-bar tint — see SectionTitle in widgets.tsx — and icon color), a
+ * "bg" tint (reserved for places that still want a pale wash), a saturated
+ * "dk" (text/icons that need contrast on a light card), and "weekBg" (the
+ * full-width Chores bar's tone — same hue, pulled slightly darker/more
+ * saturated than "bg"). Tuned by eye against the existing hand-picked
+ * palette rather than any formal contrast target.
+ *
+ * `bold` (used by the Bold Brights/Jewel Tones presets) shifts "main"
+ * noticeably more saturated and a bit darker/richer — those two presets
+ * exist specifically to look bolder than Classic/Ocean/Sunset/Forest/Berry,
+ * so they get their own stronger constants rather than just a more
+ * saturated seed hex (which the normal saturation cap would otherwise
+ * flatten back down to the same boldness as every other preset). */
 export function deriveSectionShades(
   seedHex: string,
   isDark: boolean,
+  bold = false,
 ): { main: string; bg: string; dk: string; weekBg: string } {
   const [r, g, b] = hexToRgb(seedHex);
   const [h, s] = rgbToHsl(r, g, b);
   if (!isDark) {
     return {
-      main: rgbToHex(...hslToRgb(h, clampSaturation(s, 0.35, 0.6), 0.76)),
+      main: bold
+        ? rgbToHex(...hslToRgb(h, clampSaturation(s, 0.55, 0.85), 0.6))
+        : rgbToHex(...hslToRgb(h, clampSaturation(s, 0.35, 0.6), 0.76)),
       bg: rgbToHex(...hslToRgb(h, clampSaturation(s, 0.3, 0.55), 0.91)),
-      dk: rgbToHex(...hslToRgb(h, clampSaturation(s, 0.4, 0.6), 0.36)),
+      dk: bold
+        ? rgbToHex(...hslToRgb(h, clampSaturation(s, 0.55, 0.85), 0.3))
+        : rgbToHex(...hslToRgb(h, clampSaturation(s, 0.4, 0.6), 0.36)),
       weekBg: rgbToHex(...hslToRgb(h, clampSaturation(s, 0.28, 0.5), 0.85)),
     };
   }
   return {
-    main: rgbToHex(...hslToRgb(h, clampSaturation(s, 0.3, 0.45), 0.42)),
+    main: bold
+      ? rgbToHex(...hslToRgb(h, clampSaturation(s, 0.5, 0.8), 0.48))
+      : rgbToHex(...hslToRgb(h, clampSaturation(s, 0.3, 0.45), 0.42)),
     bg: rgbToHex(...hslToRgb(h, clampSaturation(s, 0.25, 0.4), 0.2)),
-    dk: rgbToHex(...hslToRgb(h, clampSaturation(s, 0.35, 0.4), 0.74)),
+    dk: bold
+      ? rgbToHex(...hslToRgb(h, clampSaturation(s, 0.5, 0.8), 0.78))
+      : rgbToHex(...hslToRgb(h, clampSaturation(s, 0.35, 0.4), 0.74)),
     weekBg: rgbToHex(...hslToRgb(h, clampSaturation(s, 0.25, 0.38), 0.24)),
   };
 }
@@ -111,7 +125,7 @@ export const CLASSIC_SEED: PaletteSeed = {
   accent: '#C8673E',
 };
 
-export const PALETTE_PRESETS: { id: Exclude<PaletteId, 'custom'>; label: string; seed: PaletteSeed }[] = [
+export const PALETTE_PRESETS: { id: Exclude<PaletteId, 'custom'>; label: string; seed: PaletteSeed; bold?: boolean }[] = [
   { id: 'classic', label: 'Classic', seed: CLASSIC_SEED },
   {
     id: 'ocean',
@@ -133,11 +147,31 @@ export const PALETTE_PRESETS: { id: Exclude<PaletteId, 'custom'>; label: string;
     label: 'Berry',
     seed: { cal: '#8A4FA0', meal: '#B85C8E', chores: '#6B4FA0', boards: '#A24D6E', verse: '#7B4FB8', accent: '#A24D8E' },
   },
+  // The two bold presets below use `bold: true` (see deriveSectionShades)
+  // rather than just picking louder seed hexes — the normal saturation cap
+  // would otherwise flatten a louder seed back down to the same boldness as
+  // every preset above.
+  {
+    id: 'brights',
+    label: 'Bold Brights',
+    bold: true,
+    seed: { cal: '#0EA5E9', meal: '#F59E0B', chores: '#22C55E', boards: '#EC4899', verse: '#8B5CF6', accent: '#EF4444' },
+  },
+  {
+    id: 'jewel',
+    label: 'Jewel Tones',
+    bold: true,
+    seed: { cal: '#1D4ED8', meal: '#B45309', chores: '#047857', boards: '#9D174D', verse: '#6D28D9', accent: '#B91C1C' },
+  },
 ];
 
 export function seedFor(paletteId: PaletteId, customSeed: PaletteSeed): PaletteSeed {
   if (paletteId === 'custom') return customSeed;
   return PALETTE_PRESETS.find((p) => p.id === paletteId)?.seed ?? CLASSIC_SEED;
+}
+
+function isBoldPalette(paletteId: PaletteId): boolean {
+  return PALETTE_PRESETS.find((p) => p.id === paletteId)?.bold ?? false;
 }
 
 /** The 6 section colors (as swatch dots, always in light-mode tone so the
@@ -149,8 +183,9 @@ export function paletteSwatchDots(paletteId: PaletteId, customSeed: PaletteSeed)
     return [lightColors.cal, lightColors.meal, lightColors.chores, lightColors.boards, lightColors.verse, lightColors.accent];
   }
   const seed = seedFor(paletteId, customSeed);
+  const bold = isBoldPalette(paletteId);
   return [seed.cal, seed.meal, seed.chores, seed.boards, seed.verse, seed.accent].map(
-    (hex) => deriveSectionShades(hex, false).main,
+    (hex) => deriveSectionShades(hex, false, bold).main,
   );
 }
 
@@ -187,12 +222,13 @@ type SectionColors = Pick<
 export function sectionColorsFor(paletteId: PaletteId, customSeed: PaletteSeed, isDark: boolean): SectionColors | null {
   if (paletteId === 'classic') return null;
   const seed = seedFor(paletteId, customSeed);
-  const cal = deriveSectionShades(seed.cal, isDark);
-  const meal = deriveSectionShades(seed.meal, isDark);
-  const chores = deriveSectionShades(seed.chores, isDark);
-  const boards = deriveSectionShades(seed.boards, isDark);
-  const verse = deriveSectionShades(seed.verse, isDark);
-  const accent = deriveSectionShades(seed.accent, isDark);
+  const bold = isBoldPalette(paletteId);
+  const cal = deriveSectionShades(seed.cal, isDark, bold);
+  const meal = deriveSectionShades(seed.meal, isDark, bold);
+  const chores = deriveSectionShades(seed.chores, isDark, bold);
+  const boards = deriveSectionShades(seed.boards, isDark, bold);
+  const verse = deriveSectionShades(seed.verse, isDark, bold);
+  const accent = deriveSectionShades(seed.accent, isDark, bold);
   return {
     cal: cal.main,
     calBg: cal.bg,

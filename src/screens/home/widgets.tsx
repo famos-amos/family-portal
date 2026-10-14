@@ -17,7 +17,7 @@ import {
 import { dailyChallenges, verses } from '../../data/seed';
 import { isEventCalendarEnabled } from '../../lib/calendarVisibility';
 import { eventCalendarColor } from '../../lib/calendarColors';
-import { addDays, buildMonthGrid, buildWeekGrid, dayOfWeek, dayOfYear, formatWeekTitle, todayIso } from '../../lib/date';
+import { addDays, buildMonthGrid, buildWeekGrid, dayOfWeek, dayOfYear, formatWeekTitle, toIso, todayIso } from '../../lib/date';
 import { CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ChoresIcon, MealIcon, QuestionIcon, StarIcon } from '../../components/icons';
 import { Avatar } from '../../components/Avatar';
 import { SegmentedControl } from '../../components/ui';
@@ -38,15 +38,35 @@ function SectionTitle({
   icon,
   children,
   right,
+  tint,
 }: {
   icon: React.ReactNode;
   children: React.ReactNode;
   /** Optional trailing content, pushed to the far right of the title row. */
   right?: React.ReactNode;
+  /** This section's color (e.g. theme.colors.calBg) — the title row bleeds
+   * out to the card's own edges (negative margin cancelling WidgetShell's
+   * 16px card padding) and fills with this, so it reads as a shaded "table
+   * header" bar across the top of an otherwise plain card, per the
+   * reference design. WidgetShell's overflow:hidden clips the bleed to the
+   * card's rounded corners. */
+  tint: string;
 }) {
   const theme = useTheme();
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginHorizontal: -16,
+        marginTop: -16,
+        marginBottom: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        backgroundColor: tint,
+      }}
+    >
       {icon}
       <Text numberOfLines={1} style={{ fontFamily: theme.fonts.head, color: theme.colors.ink, fontSize: 15, flexShrink: 1 }}>
         {children}
@@ -106,7 +126,9 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
 
   return (
     <View style={{ flex: 1, minHeight: 0 }}>
-      <SectionTitle icon={<CalendarIcon size={wide ? 20 : 17} color={theme.colors.ink} />}>Calendar</SectionTitle>
+      <SectionTitle icon={<CalendarIcon size={wide ? 20 : 17} color={theme.colors.ink} />} tint={theme.colors.cal}>
+        Calendar
+      </SectionTitle>
       <SegmentedControl
         value={view}
         onChange={setView}
@@ -165,7 +187,7 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
             {weeks.map((week, wi) => (
               <View key={wi} style={styles.calWeekRow}>
                 {week.map(({ date, inMonth }, i) => {
-                  const iso = date.toISOString().slice(0, 10);
+                  const iso = toIso(date);
                   const isToday = iso === todayIso();
                   const dayEvents = visibleEvents.filter((e) => e.date === iso);
                   return (
@@ -174,12 +196,11 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
                       onPress={() => navigation.navigate('Calendar')}
                       style={[
                         styles.calCell,
-                        // The card itself is plain white now (not the pale
-                        // blue tint it used to be — see backgroundFor in
-                        // HomeScreen.tsx), so "today" needs an actual color
-                        // to stand out and regular cells need a visible-on-
-                        // white tint instead of a translucent white that
-                        // used to pop against a colored card.
+                        // The card body is plain white (only the SectionTitle
+                        // header strip is tinted now), so "today" needs an
+                        // actual color to stand out and regular cells need a
+                        // visible-on-white tint instead of a translucent
+                        // white that used to pop against a colored card.
                         { backgroundColor: isToday ? theme.colors.calBg : theme.isDark ? '#FFFFFF0A' : theme.colors.fieldBg },
                         isToday && { borderWidth: 2, borderColor: theme.colors.cal },
                         !inMonth && { opacity: 0.35 },
@@ -211,7 +232,7 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
         // straight to it on the full Calendar screen.
         <ScrollView style={{ flex: 1, minHeight: 0 }} showsVerticalScrollIndicator={false}>
           {days.map(({ date }) => {
-            const iso = date.toISOString().slice(0, 10);
+            const iso = toIso(date);
             const isToday = iso === todayIso();
             const dayEvents = visibleEvents
               .filter((e) => e.date === iso)
@@ -318,6 +339,7 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
     <Pressable onPress={openTodayInCalendar} style={{ flex: 1, minHeight: 0 }}>
       <SectionTitle
         icon={<CalendarIcon size={17} color={theme.colors.ink} />}
+        tint={theme.colors.cal}
         right={
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <View style={[styles.countBadge, { backgroundColor: theme.colors.calDk + '26' }]}>
@@ -375,53 +397,81 @@ export function EventsWidgetContent({ size }: { size: WidgetSize }) {
 }
 
 // ---------------------------------------------------------------------------
-export function MealWidgetContent({ size }: { size: WidgetSize }) {
+// Simplified to 3 fixed lines — yesterday, tonight, tomorrow — rather than a
+// hero card plus a variable-length upcoming list. Tonight is the one that
+// matters at a glance, so it's the only line with real emphasis (larger
+// type, its own highlighted row); yesterday/tomorrow are deliberately quiet
+// (small, no box around them) since they're just context.
+export function MealWidgetContent() {
   const theme = useTheme();
   const navigation = useNavigation<any>();
   const meals = useMealsStore((s) => s.meals);
   const family = useFamilyStore((s) => s.members);
   const today = dayOfWeek();
-  const dinner = meals.find((m) => m.day === today && m.slot === 'dinner');
-  const chefs = dinner ? family.filter((f) => dinner.chefIds.includes(f.id)) : [];
 
   const order: (typeof today)[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   const todayIdx = order.indexOf(today);
-  const upcoming = [1, 2]
-    .map((offset) => order[(todayIdx + offset) % 7])
-    .map((d) => ({ day: d, meal: meals.find((m) => m.day === d && m.slot === 'dinner') }))
-    .filter((x) => x.meal);
+  const yesterday = order[(todayIdx + 6) % 7];
+  const tomorrow = order[(todayIdx + 1) % 7];
+  const mealFor = (d: typeof today) => meals.find((m) => m.day === d && m.slot === 'dinner');
+  const dayLabel = (d: typeof today) => d[0].toUpperCase() + d.slice(1);
+
+  const dinner = mealFor(today);
+  const chefs = dinner ? family.filter((f) => dinner.chefIds.includes(f.id)) : [];
+  const yesterdayMeal = mealFor(yesterday);
+  const tomorrowMeal = mealFor(tomorrow);
 
   return (
     <Pressable onPress={() => navigation.navigate('MealPlans')} style={{ flex: 1 }}>
-      <SectionTitle icon={<MealIcon size={17} color={theme.colors.ink} />}>Meal Plan</SectionTitle>
-      <View style={[styles.mealHero, { backgroundColor: theme.isDark ? '#FFFFFF10' : '#FFFFFFA0' }]}>
-        <Text style={{ fontFamily: theme.fonts.head, fontSize: 15, color: theme.colors.ink, marginBottom: 3 }}>
-          {dinner?.name ?? 'No dinner planned yet'}
-        </Text>
-        {chefs.length > 0 && (
-          <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 11, color: theme.colors.inkSoft, marginBottom: 8 }}>
-            Chef{chefs.length > 1 ? 's' : ''}: {chefs.map((c) => c.name).join(', ')} • Dinner
+      <SectionTitle icon={<MealIcon size={17} color={theme.colors.ink} />} tint={theme.colors.meal}>
+        Meal Plan
+      </SectionTitle>
+      <View style={{ flex: 1, justifyContent: 'center', gap: 8 }}>
+        <View style={styles.mealQuietRow}>
+          <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 11, color: theme.colors.inkSoft }}>
+            {dayLabel(yesterday)}
           </Text>
-        )}
-        {!!dinner?.rating && (
-          <View style={{ flexDirection: 'row', gap: 3 }}>
-            {[0, 1, 2, 3, 4].map((i) => (
-              <StarIcon key={i} size={15} color={theme.colors.star} filled={i < (dinner.rating ?? 0)} />
-            ))}
-          </View>
-        )}
+          <Text
+            numberOfLines={1}
+            style={{ fontFamily: theme.fonts.bodySemiBold, fontSize: 11, color: theme.colors.inkSoft, flexShrink: 1 }}
+          >
+            {yesterdayMeal?.name ?? '—'}
+          </Text>
+        </View>
+
+        <View style={[styles.mealHero, { backgroundColor: theme.colors.mealBg }]}>
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 11, color: theme.colors.mealDk, marginBottom: 2 }}>
+            Tonight
+          </Text>
+          <Text numberOfLines={1} style={{ fontFamily: theme.fonts.head, fontSize: 19, color: theme.colors.ink }}>
+            {dinner?.name ?? 'Nothing planned yet'}
+          </Text>
+          {chefs.length > 0 && (
+            <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 11, color: theme.colors.inkSoft, marginTop: 3 }}>
+              Chef{chefs.length > 1 ? 's' : ''}: {chefs.map((c) => c.name).join(', ')}
+            </Text>
+          )}
+          {!!dinner?.rating && (
+            <View style={{ flexDirection: 'row', gap: 3, marginTop: 5 }}>
+              {[0, 1, 2, 3, 4].map((i) => (
+                <StarIcon key={i} size={13} color={theme.colors.star} filled={i < (dinner.rating ?? 0)} />
+              ))}
+            </View>
+          )}
+        </View>
+
+        <View style={styles.mealQuietRow}>
+          <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 11, color: theme.colors.inkSoft }}>
+            {dayLabel(tomorrow)}
+          </Text>
+          <Text
+            numberOfLines={1}
+            style={{ fontFamily: theme.fonts.bodySemiBold, fontSize: 11, color: theme.colors.inkSoft, flexShrink: 1 }}
+          >
+            {tomorrowMeal?.name ?? '—'}
+          </Text>
+        </View>
       </View>
-      {size !== 'sm' &&
-        upcoming.map(({ day, meal }) => (
-          <View key={day} style={[styles.mealRow, { borderTopColor: theme.colors.border }]}>
-            <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 11, color: theme.colors.inkSoft }}>
-              {day === order[(todayIdx + 1) % 7] ? 'Tomorrow' : day[0].toUpperCase() + day.slice(1)}
-            </Text>
-            <Text style={{ fontFamily: theme.fonts.bodyBold, fontSize: 11, color: theme.colors.inkSoft }}>
-              {meal?.name}
-            </Text>
-          </View>
-        ))}
     </Pressable>
   );
 }
@@ -443,6 +493,7 @@ export function TodoWidgetContent() {
       <Pressable onPress={() => navigation.navigate('Boards')}>
         <SectionTitle
           icon={<ChoresIcon size={17} color={theme.colors.ink} />}
+          tint={theme.colors.boards}
           right={
             <View style={[styles.countBadge, { backgroundColor: theme.colors.boardsDk + '26' }]}>
               <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 11.5, color: theme.colors.boardsDk }}>
@@ -555,7 +606,11 @@ export function ChallengeWidgetContent() {
 
   return (
     <View>
-      <SectionTitle icon={<QuestionIcon size={17} color={theme.colors.ink} />} right={voterPicker}>
+      <SectionTitle
+        icon={<QuestionIcon size={17} color={theme.colors.ink} />}
+        tint={theme.colors.boards}
+        right={voterPicker}
+      >
         Daily Challenge
       </SectionTitle>
       <View
@@ -564,8 +619,8 @@ export function ChallengeWidgetContent() {
           paddingHorizontal: 11,
           paddingVertical: 4,
           borderRadius: 999,
-          backgroundColor: theme.isDark ? '#FFFFFF16' : '#FFFFFFB0',
-          marginBottom: 8,
+          backgroundColor: theme.colors.boardsBg,
+          marginBottom: 6,
         }}
       >
         <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 10.5, color: theme.colors.boardsDk }}>
@@ -574,7 +629,7 @@ export function ChallengeWidgetContent() {
       </View>
       <Text
         maxFontSizeMultiplier={1.2}
-        style={{ fontFamily: theme.fonts.bodyBold, fontSize: 12, lineHeight: 16, color: theme.colors.ink, marginBottom: 10 }}
+        style={{ fontFamily: theme.fonts.bodyBold, fontSize: 12, lineHeight: 16, color: theme.colors.ink, marginBottom: 8 }}
       >
         {challenge.question}
       </Text>
@@ -591,7 +646,7 @@ export function ChallengeWidgetContent() {
                   onPress={() => onOption(key)}
                   style={[
                     styles.optBtn,
-                    { backgroundColor: theme.isDark ? '#FFFFFF16' : '#FFFFFFB0' },
+                    { backgroundColor: theme.colors.boardsBg },
                     picked && { borderColor: theme.colors.boardsDk, borderWidth: 2 },
                     !voter && { opacity: 0.55 },
                   ]}
@@ -658,7 +713,9 @@ export function VerseWidgetContent() {
 
   return (
     <View>
-      <SectionTitle icon={<Text style={{ fontSize: 16 }}>📖</Text>}>Verse of the Day</SectionTitle>
+      <SectionTitle icon={<Text style={{ fontSize: 16 }}>📖</Text>} tint={theme.colors.verse}>
+        Verse of the Day
+      </SectionTitle>
       <Text style={{ fontFamily: theme.fonts.head, fontSize: 30, color: '#B79FD6', lineHeight: 26 }}>"</Text>
       <Text style={{ fontFamily: theme.fonts.bodySemiBold, fontStyle: 'italic', fontSize: 13, color: theme.colors.ink, lineHeight: 19 }}>
         {text}
@@ -719,7 +776,22 @@ function ProgressRing({
 }
 
 // ---------------------------------------------------------------------------
-export function ChoresWidgetContent() {
+// Ring size now actually responds to the resize control (the corner handle
+// WidgetShell shows for any widget passed a `size`) — it used to ignore
+// `size` entirely and always render the same fixed ring, so cycling
+// sm/md/lg visibly did nothing.
+const CHORES_RING_SIZES: Record<WidgetSize, { wide: number; narrow: number }> = {
+  sm: { wide: 56, narrow: 44 },
+  md: { wide: 72, narrow: 54 },
+  lg: { wide: 90, narrow: 66 },
+};
+const CHORES_RING_STROKES: Record<WidgetSize, { wide: number; narrow: number }> = {
+  sm: { wide: 7, narrow: 5 },
+  md: { wide: 8, narrow: 6 },
+  lg: { wide: 10, narrow: 7 },
+};
+
+export function ChoresWidgetContent({ size }: { size: WidgetSize }) {
   const theme = useTheme();
   const navigation = useNavigation<any>();
   const wide = useIsWide();
@@ -744,8 +816,8 @@ export function ChoresWidgetContent() {
   // (this row is the shortest of the 3 dashboard rows). 92px rings used to
   // spill past the card's bottom edge once name + stars text were added
   // above/below them.
-  const ringSize = wide ? 72 : 54;
-  const ringStroke = wide ? 8 : 6;
+  const ringSize = wide ? CHORES_RING_SIZES[size].wide : CHORES_RING_SIZES[size].narrow;
+  const ringStroke = wide ? CHORES_RING_STROKES[size].wide : CHORES_RING_STROKES[size].narrow;
 
   const totalDone = withChores.reduce((sum, x) => sum + x.done, 0);
   const totalAll = withChores.reduce((sum, x) => sum + x.total, 0);
@@ -777,7 +849,11 @@ export function ChoresWidgetContent() {
 
   return (
     <Pressable onPress={() => navigation.navigate('Chores')} style={{ flex: 1 }}>
-      <SectionTitle icon={<ChoresIcon size={wide ? 20 : 17} color={theme.colors.ink} />} right={weekProgress}>
+      <SectionTitle
+        icon={<ChoresIcon size={wide ? 20 : 17} color={theme.colors.ink} />}
+        tint={theme.colors.choresWeekBg}
+        right={weekProgress}
+      >
         Chores
       </SectionTitle>
       <View style={{ flexDirection: 'row', gap: wide ? 18 : 14 }}>
@@ -790,7 +866,7 @@ export function ChoresWidgetContent() {
               size={ringSize}
               stroke={ringStroke}
               progress={total ? done / total : 0}
-              trackColor={theme.isDark ? '#FFFFFF20' : '#FFFFFFB0'}
+              trackColor={theme.isDark ? '#FFFFFF20' : theme.colors.fieldBg}
               color={member.color}
             >
               <Text style={{ fontFamily: theme.fonts.head, fontSize: wide ? 16 : 12, color: theme.colors.ink }}>
@@ -858,7 +934,9 @@ const styles = StyleSheet.create({
   eventRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderBottomWidth: 1 },
   eventDot: { width: 9, height: 9, borderRadius: 4.5 },
   mealHero: { borderRadius: 16, padding: 12 },
-  mealRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderTopWidth: 1, marginTop: 4 },
+  // The quiet yesterday/tomorrow lines — no box, no border, just a dimmer
+  // row so "Tonight" above is the only thing that reads as emphasized.
+  mealQuietRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, paddingHorizontal: 2 },
   todoRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
   todoBox: { width: 17, height: 17, borderRadius: 6, borderWidth: 2 },
   optBtn: { flex: 1, alignItems: 'center', paddingVertical: 6, paddingHorizontal: 6, borderRadius: 10, borderWidth: 2, borderColor: 'transparent' },

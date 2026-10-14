@@ -37,6 +37,14 @@ export function WidgetShell({
         {
           backgroundColor: backgroundColor ?? theme.colors.panel,
           borderRadius: theme.radii.xl,
+          borderWidth: 1.5,
+          borderColor: theme.colors.border,
+          // Each widget's SectionTitle bleeds out to the card's edges (via
+          // negative margin) to render a full-width shaded header bar, like
+          // a table header row — overflow:hidden here is what clips that
+          // bleed to the card's own rounded corners instead of the header's
+          // square corners poking out past them.
+          overflow: 'hidden',
         },
         style,
       ]}

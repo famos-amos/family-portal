@@ -2,8 +2,21 @@ import { DayOfWeek } from '../store/types';
 
 const DOW: DayOfWeek[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
+/** YYYY-MM-DD for `date` in the LOCAL timezone — NOT `date.toISOString()`,
+ * which gives the UTC calendar date. That's a real, user-visible bug: in
+ * the evening in any timezone behind UTC (all of the Americas), UTC has
+ * already rolled over to tomorrow, so `toISOString().slice(0,10)` silently
+ * returns tomorrow's date — e.g. "Today's Events" would show tomorrow's
+ * events instead of today's, every evening. */
+export function toLocalIso(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return toLocalIso(new Date());
 }
 
 export function dayOfWeek(date: Date = new Date()): DayOfWeek {
@@ -23,7 +36,7 @@ export function addDays(date: Date, days: number): Date {
 }
 
 export function toIso(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  return toLocalIso(date);
 }
 
 export function formatMonthTitle(date: Date): string {

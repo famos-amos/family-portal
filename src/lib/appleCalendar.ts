@@ -15,6 +15,7 @@
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { CalendarEvent } from '../store/types';
+import { todayIso } from './date';
 
 const CREDENTIAL_KEY = 'roost.appleCalendarCredentials';
 const PRINCIPAL_URL = 'https://caldav.icloud.com/';
@@ -194,7 +195,7 @@ function parseIcsEventsFromMultistatus(xml: string): CalendarEvent[] {
     const year = dtstart.slice(0, 4);
     const month = dtstart.slice(4, 6);
     const day = dtstart.slice(6, 8);
-    const date = year && month && day ? `${year}-${month}-${day}` : new Date().toISOString().slice(0, 10);
+    const date = year && month && day ? `${year}-${month}-${day}` : todayIso();
     return {
       id: `apple_${i}_${dtstart}`,
       date,

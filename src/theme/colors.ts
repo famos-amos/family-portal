@@ -66,7 +66,10 @@ export const lightColors: ColorScheme = {
   boardsDk: '#A24D6E',
   verse: '#D9C7EC',
   verseBg: '#F5EFFB',
-  choresWeekBg: '#F3E6D3',
+  // Bolder than the original pale tan — this is a card header tint now (see
+  // SectionTitle in widgets.tsx), not a whole-card background, so it can
+  // afford to read as a real color instead of a subtle wash.
+  choresWeekBg: '#E6C999',
 
   accent: '#C8673E',
   accentBg: '#FBE4D7',
@@ -99,7 +102,7 @@ export const darkColors: ColorScheme = {
   boardsDk: '#E9A9C4',
   verse: '#A98BC9',
   verseBg: '#2E2836',
-  choresWeekBg: '#3A3226',
+  choresWeekBg: '#C99A52',
 
   accent: '#E8956B',
   accentBg: '#3A2A20',
