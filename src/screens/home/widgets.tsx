@@ -443,7 +443,7 @@ export function MealWidgetContent() {
           <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 11, color: theme.colors.mealDk, marginBottom: 2 }}>
             Tonight
           </Text>
-          <Text numberOfLines={1} style={{ fontFamily: theme.fonts.head, fontSize: 19, color: theme.colors.ink }}>
+          <Text numberOfLines={1} style={{ fontFamily: theme.fonts.head, fontSize: 16, color: theme.colors.ink }}>
             {dinner?.name ?? 'Nothing planned yet'}
           </Text>
           {chefs.length > 0 && (
@@ -716,7 +716,6 @@ export function VerseWidgetContent() {
       <SectionTitle icon={<Text style={{ fontSize: 16 }}>📖</Text>} tint={theme.colors.verse}>
         Verse of the Day
       </SectionTitle>
-      <Text style={{ fontFamily: theme.fonts.head, fontSize: 30, color: '#B79FD6', lineHeight: 26 }}>"</Text>
       <Text style={{ fontFamily: theme.fonts.bodySemiBold, fontStyle: 'italic', fontSize: 13, color: theme.colors.ink, lineHeight: 19 }}>
         {text}
       </Text>
