@@ -9,11 +9,13 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SnapButton } from './SnapButton';
 import { HuddleButton } from './HuddleButton';
+import { QrCodeButton } from './QrCodeButton';
 
 export function HuddleControls() {
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.row, { top: insets.top + 16 }]}>
+      <QrCodeButton />
       <SnapButton />
       <HuddleButton />
     </View>

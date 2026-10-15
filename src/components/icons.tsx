@@ -164,3 +164,14 @@ export function QuestionIcon({ size, color = '#000' }: IconProps) {
     </Svg>
   );
 }
+
+export function QrCodeIcon({ size, color = '#000' }: IconProps) {
+  return (
+    <Svg {...base(size, color)}>
+      <Rect x="3" y="3" width="7" height="7" rx="1" />
+      <Rect x="14" y="3" width="7" height="7" rx="1" />
+      <Rect x="3" y="14" width="7" height="7" rx="1" />
+      <Path d="M14 14h3v3h-3zM19 14h2v2h-2zM14 19h2v2h-2zM19 19h2v2h-2z" />
+    </Svg>
+  );
+}
