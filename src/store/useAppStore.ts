@@ -199,15 +199,116 @@ async function fetchTable(table: string): Promise<{ ok: boolean; rows: any[] }> 
  * through `upsert` (add-or-replace-by-id — covers both a genuinely new row
  * from another device AND the echo of this device's own optimistic write)
  * and DELETEs through `remove`. Each store calls this once, from its own
- * `hydrate()`, guarded so a second call is a no-op. */
+ * `hydrate()`, guarded so a second call is a no-op.
+ *
+ * The `household_id=eq.<id>` filter is an efficiency measure, not the
+ * security boundary — RLS (see migrate_v8_cutover.sql) already enforces
+ * isolation on the payloads themselves. It just stops this device being
+ * woken up for every other household's writes too. */
 function subscribeRealtime(table: string, upsert: (row: any) => void, remove: (id: string) => void) {
   if (!isSupabaseConfigured) return;
+  const householdId = useAuthStore.getState().householdId;
+  const filter = householdId ? `household_id=eq.${householdId}` : undefined;
   supabase
     .channel(`public:${table}`)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table }, (payload: any) => upsert(payload.new))
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table }, (payload: any) => upsert(payload.new))
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table }, (payload: any) => remove(payload.old.id))
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table, filter }, (payload: any) => upsert(payload.new))
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table, filter }, (payload: any) => upsert(payload.new))
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table, filter }, (payload: any) => remove(payload.old.id))
     .subscribe();
+}
+
+// ---------------------------------------------------------------------------
+// Auth — real per-family login (see migrate_v8.sql / migrate_v8_cutover.sql).
+// One signed-in Supabase Auth user per household; `householdId` is looked up
+// once per session from `profiles` and is what every insert/realtime filter
+// above keys off. Session persistence/refresh is handled by the Supabase
+// client itself (see src/lib/supabase.ts) — this store just mirrors that
+// state for the rest of the app to read.
+// ---------------------------------------------------------------------------
+type AuthUser = { id: string; email: string | null };
+
+type AuthState = {
+  user: AuthUser | null;
+  householdId: string | null;
+  /** True once the initial session check (or the "not configured" no-op)
+   * has resolved — App.tsx waits on this before deciding whether to show
+   * AuthScreen, so there's no flash of the wrong screen. */
+  initialized: boolean;
+  signUp: (email: string, password: string, householdName: string) => Promise<{ error: string | null }>;
+  signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  signOut: () => Promise<void>;
+};
+
+export const useAuthStore = create<AuthState>()(() => ({
+  user: null,
+  householdId: null,
+  initialized: false,
+  signUp: async (email, password, householdName) => {
+    if (!isSupabaseConfigured) return { error: 'Supabase is not configured.' };
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { household_name: householdName } },
+    });
+    return { error: error?.message ?? null };
+  },
+  signIn: async (email, password) => {
+    if (!isSupabaseConfigured) return { error: 'Supabase is not configured.' };
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    return { error: error?.message ?? null };
+  },
+  signOut: async () => {
+    if (isSupabaseConfigured) await supabase.auth.signOut();
+    // Reloading (web only) is the simplest reliable way to clear every
+    // module-level "already subscribed" flag and in-memory store below —
+    // trying to precisely tear down and re-open 9 realtime channels plus
+    // reset 9 stores' state in place is a lot of surface area for a
+    // transition that, for this app's actual use (one family signed in
+    // indefinitely on their own tablet), happens rarely if ever.
+    if (typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
+      window.location.reload();
+    }
+  },
+}));
+
+async function fetchHouseholdId(userId: string): Promise<string | null> {
+  const { data, error } = await supabase.from('profiles').select('household_id').eq('id', userId).single();
+  if (error) {
+    logSyncError('fetch', 'profiles', error);
+    return null;
+  }
+  return data?.household_id ?? null;
+}
+
+/** Starts listening for Supabase auth state changes and resolves once the
+ * *initial* session check has completed — call once from App.tsx, before
+ * `hydrateAllStores()`. Nothing else in this file should fetch/subscribe
+ * until this has resolved and `useAuthStore.getState().householdId` is set,
+ * since every table's RLS policy requires a signed-in household. */
+export function initAuth(): Promise<void> {
+  if (!isSupabaseConfigured) {
+    useAuthStore.setState({ initialized: true });
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    supabase.auth.onAuthStateChange(async (_event: string, session: any) => {
+      if (session?.user) {
+        const householdId = await fetchHouseholdId(session.user.id);
+        useAuthStore.setState({
+          user: { id: session.user.id, email: session.user.email ?? null },
+          householdId,
+          initialized: true,
+        });
+      } else {
+        useAuthStore.setState({ user: null, householdId: null, initialized: true });
+      }
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1025,19 +1126,24 @@ export const useVerseStore = create<VerseState>()(
 );
 
 // ---------------------------------------------------------------------------
-// App lock — one PIN, shared by everyone (Settings → App Lock), gating the
-// whole app. Only its SHA-256 hash lives in Supabase (`app_lock`, single row
-// id 'main') — see src/lib/pin.ts. `unlocked` is per-device and persisted
-// locally: enter the PIN once on a device/browser and it stays open there
-// (App.tsx re-locks it only if `lock()` is called there, or someone changes
-// the PIN elsewhere). A brand-new device/browser — or an attacker who
-// doesn't have the PIN — always starts with `unlocked: false` and has to
-// clear the lock screen first; there's no bypassing it without the shared
-// PIN. No row in the table at all means no PIN is configured, so App.tsx
-// shows the app with no gate — that's what lets a fresh install reach
-// Settings to set one in the first place.
+// App lock — one PIN per household (Settings → App Lock), gating the app
+// underneath the account login. Only its SHA-256 hash lives in Supabase
+// (`app_lock`, one row per household — see src/lib/pin.ts). `unlocked` is
+// per-device and persisted locally: enter the PIN once on a device/browser
+// and it stays open there (App.tsx re-locks it only if `lock()` is called
+// there, or someone changes the PIN elsewhere). A brand-new device/browser —
+// or an attacker who doesn't have the PIN — always starts with
+// `unlocked: false` and has to clear the lock screen first. No row for this
+// household means no PIN is configured, so App.tsx shows the app with no
+// gate — that's what lets a fresh household reach Settings to set one.
+//
+// The row's `id` used to be the fixed string 'main' back when there was
+// only ever one household; it's the household's own id now (it has to be —
+// `id` is the primary key, and every household needs its own row).
 // ---------------------------------------------------------------------------
-const APP_LOCK_ROW_ID = 'main';
+function appLockRowId(): string | null {
+  return useAuthStore.getState().householdId;
+}
 let appLockSubscribed = false;
 
 type AppLockState = {
@@ -1075,32 +1181,35 @@ export const useAppLockStore = create<AppLockState>()(
             });
           });
         }
+        const rowId = appLockRowId();
         const { ok, rows } = await fetchTable('app_lock');
-        if (ok) set({ pinHash: rows.find((r) => r.id === APP_LOCK_ROW_ID)?.pin_hash ?? null });
+        if (ok) set({ pinHash: rows.find((r) => r.id === rowId)?.pin_hash ?? null });
         set({ hydrated: true });
         if (!appLockSubscribed) {
           appLockSubscribed = true;
           subscribeRealtime(
             'app_lock',
             (row) => {
-              if (row.id === APP_LOCK_ROW_ID) set({ pinHash: row.pin_hash ?? null });
+              if (row.id === appLockRowId()) set({ pinHash: row.pin_hash ?? null });
             },
             (id) => {
-              if (id === APP_LOCK_ROW_ID) set({ pinHash: null });
+              if (id === appLockRowId()) set({ pinHash: null });
             },
           );
         }
       },
       setPin: async (hash) => {
         set({ pinHash: hash, unlocked: true });
-        if (isSupabaseConfigured) {
-          const { error } = await supabase.from('app_lock').upsert({ id: APP_LOCK_ROW_ID, pin_hash: hash });
+        const rowId = appLockRowId();
+        if (isSupabaseConfigured && rowId) {
+          const { error } = await supabase.from('app_lock').upsert({ id: rowId, pin_hash: hash });
           if (error) logSyncError('upsert', 'app_lock', error);
         }
       },
       clearPin: async () => {
         set({ pinHash: null });
-        syncDelete('app_lock', APP_LOCK_ROW_ID);
+        const rowId = appLockRowId();
+        if (rowId) syncDelete('app_lock', rowId);
       },
       unlock: () => set({ unlocked: true }),
       lock: () => set({ unlocked: false }),
@@ -1116,9 +1225,19 @@ export const useAppLockStore = create<AppLockState>()(
 );
 
 // ---------------------------------------------------------------------------
-// Bootstrap — call once from App.tsx before rendering the rest of the app.
+// Bootstrap — call once from App.tsx, after initAuth() resolves and only
+// once a household is actually signed in. Every table's RLS policy requires
+// it (see migrate_v8_cutover.sql), so fetching before then would just come
+// back empty for everything — not an error, indistinguishable from a
+// genuinely empty household, which is exactly the confusing state this
+// guard avoids.
 // ---------------------------------------------------------------------------
 export async function hydrateAllStores(): Promise<void> {
+  if (isSupabaseConfigured && !useAuthStore.getState().householdId) {
+    // eslint-disable-next-line no-console
+    console.warn('[app] hydrateAllStores() called with no signed-in household — skipping.');
+    return;
+  }
   await Promise.all([
     useFamilyStore.getState().hydrate(),
     useChoresStore.getState().hydrate(),

@@ -8,8 +8,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from './src/theme/ThemeProvider';
 import { useAppFonts } from './src/theme/useAppFonts';
 import { RootNavigator } from './src/navigation/RootNavigator';
-import { hydrateAllStores, useAppLockStore, useSettingsStore } from './src/store/useAppStore';
+import { hydrateAllStores, initAuth, useAppLockStore, useAuthStore, useSettingsStore } from './src/store/useAppStore';
+import { isSupabaseConfigured } from './src/lib/supabase';
 import { LockScreen } from './src/screens/LockScreen';
+import { AuthScreen } from './src/screens/AuthScreen';
 import { AmbientScreen } from './src/screens/AmbientScreen';
 import { HuddleControls } from './src/components/HuddleControls';
 import { UiScaleWrapper } from './src/components/UiScaleWrapper';
@@ -26,11 +28,24 @@ WebBrowser.maybeCompleteAuthSession();
 
 function AppShell() {
   const fontsLoaded = useAppFonts();
+  const [authInitialized, setAuthInitialized] = useState(false);
   const [dataReady, setDataReady] = useState(false);
   const theme = useTheme();
+  const householdId = useAuthStore((s) => s.householdId);
   const pinHash = useAppLockStore((s) => s.pinHash);
   const unlocked = useAppLockStore((s) => s.unlocked);
   const ambient = useSettingsStore((s) => s.ambient);
+
+  // Real per-family login (see useAuthStore / migrate_v8.sql) gates
+  // everything below it — there's nothing to hydrate from Supabase until a
+  // household is signed in. Skipped entirely when Supabase isn't configured
+  // at all (local/demo mode), so that fallback keeps working unauthenticated
+  // exactly as it always has.
+  const needsAuth = isSupabaseConfigured && authInitialized && !householdId;
+
+  useEffect(() => {
+    initAuth().then(() => setAuthInitialized(true));
+  }, []);
 
   // This is meant to be an always-on wall display — keep the OS from ever
   // screen-locking/sleeping it while the app is open. The ambient
@@ -58,10 +73,17 @@ function AppShell() {
   const { idle, reset: resetIdleTimer } = useIdleTimer(ambient.idleMinutes * 60 * 1000, ambient.enabled);
 
   useEffect(() => {
-    // Fire once at launch: pulls the family's data down from Supabase (or,
-    // if it isn't configured, just leaves the in-memory seed data in place)
-    // and opens the realtime subscriptions that keep this device in sync
-    // with any other device open on the same household. See
+    // Waits on the auth check first — there's nothing to hydrate from
+    // Supabase until a household is signed in (see needsAuth above), and
+    // hydrateAllStores() itself now guards against being called too early
+    // too, but skipping the call entirely here avoids the console warning
+    // on every normal boot.
+    if (!authInitialized || needsAuth) return;
+
+    // Pulls the family's data down from Supabase (or, if it isn't
+    // configured, just leaves the in-memory seed data in place) and opens
+    // the realtime subscriptions that keep this device in sync with any
+    // other device signed into the same household. See
     // src/store/useAppStore.ts → "Supabase sync helpers".
     //
     // Each individual table fetch already times out on its own (see
@@ -90,9 +112,25 @@ function AppShell() {
         clearTimeout(backstop);
         finish();
       });
-  }, []);
+  }, [authInitialized, needsAuth]);
 
-  if (!fontsLoaded || !dataReady) {
+  if (!fontsLoaded || !authInitialized) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.bg }}>
+        <ActivityIndicator color={theme.colors.ink} />
+      </View>
+    );
+  }
+
+  // No signed-in household (and Supabase is actually configured — see
+  // needsAuth above) → show sign-in/sign-up instead of the loading spinner
+  // or the app itself. This sits above the PIN lock: the PIN is this
+  // household's day-to-day gate, but there's no household to gate into yet.
+  if (needsAuth) {
+    return <AuthScreen />;
+  }
+
+  if (!dataReady) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.bg }}>
         <ActivityIndicator color={theme.colors.ink} />

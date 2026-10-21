@@ -16,7 +16,7 @@ import { Avatar } from '../components/Avatar';
 import { useTheme } from '../theme/ThemeProvider';
 import { PrimaryButton, SegmentedControl, Switch } from '../components/ui';
 import { EditIcon, PlusIcon, TrashIcon } from '../components/icons';
-import { useFamilyStore, useCalendarStore, useSettingsStore, useAppLockStore } from '../store/useAppStore';
+import { useFamilyStore, useCalendarStore, useSettingsStore, useAppLockStore, useAuthStore } from '../store/useAppStore';
 import { hashPin, isValidPin, PIN_LENGTH } from '../lib/pin';
 import { personColorOptions } from '../theme/colors';
 import { FamilyMember, PaletteSeed, ThemePreference } from '../store/types';
@@ -1369,6 +1369,9 @@ function AppLockSection() {
 // ---------------------------------------------------------------------------
 function AboutSection() {
   const theme = useTheme();
+  const user = useAuthStore((s) => s.user);
+  const signOut = useAuthStore((s) => s.signOut);
+
   return (
     <View>
       <Text style={[styles.h1, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>About Huddle</Text>
@@ -1379,6 +1382,35 @@ function AboutSection() {
       <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft, marginTop: 10 }}>
         Version 0.1.0 (local build)
       </Text>
+
+      {user && (
+        <View style={[styles.memberCard, { backgroundColor: theme.colors.fieldBg, marginTop: 22 }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13.5, color: theme.colors.ink }}>
+              Signed in
+            </Text>
+            <Text style={{ fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.inkSoft, marginTop: 2 }}>
+              {user.email}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() =>
+              confirmAction(
+                'Sign out?',
+                'You’ll need your email and password to sign back in on this device.',
+                'Sign Out',
+                signOut,
+                { destructive: true },
+              )
+            }
+            style={[styles.saveBtn, { backgroundColor: theme.colors.danger }]}
+          >
+            <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: contrastText(theme.colors.danger) }}>
+              Sign Out
+            </Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }

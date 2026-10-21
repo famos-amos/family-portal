@@ -1,5 +1,6 @@
 import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Both of these are read from the environment at build time. Expo exposes
 // any env var prefixed EXPO_PUBLIC_ to client code automatically (see
@@ -31,11 +32,13 @@ if (!isSupabaseConfigured) {
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl!, supabaseAnonKey!, {
       auth: {
-        // This is a single shared household app with no per-user login (see
-        // the design spec — Settings manages family members as app data, not
-        // accounts), so there's no session to persist or refresh.
-        persistSession: false,
-        autoRefreshToken: false,
+        // Real per-family login (see migrate_v8.sql) — the session needs to
+        // persist across app restarts (same AsyncStorage every other
+        // persisted store in this app already uses) and refresh itself
+        // automatically, or everyone would have to sign back in constantly.
+        storage: AsyncStorage,
+        persistSession: true,
+        autoRefreshToken: true,
       },
     })
   : (null as unknown as ReturnType<typeof createClient>);

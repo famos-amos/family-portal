@@ -32,6 +32,12 @@
 -- below, run `supabase/migrate_v4.sql` once — it creates both new tables,
 -- turns on RLS + realtime for them, and seeds the recipe library. Nothing
 -- else changes shape, so no data conversion needed.
+--
+-- If you want real per-family login instead of the single-shared-household
+-- model described above (so a second family can use the same deployment
+-- with their own isolated data), run `supabase/migrate_v8.sql`, then sign up
+-- through the app, then run `supabase/migrate_v8_cutover.sql` — see the
+-- comments in both files for the full sequence.
 
 -- ---------------------------------------------------------------------------
 -- Tables
