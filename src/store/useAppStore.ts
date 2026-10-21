@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { makeId } from '../lib/id';
@@ -248,7 +249,21 @@ export const useAuthStore = create<AuthState>()(() => ({
     const { error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { household_name: householdName } },
+      options: {
+        data: { household_name: householdName },
+        // Without this, Supabase sends the confirmation email's link to
+        // whatever "Site URL" is configured in the dashboard — which
+        // defaults to localhost:3000 and has to be updated there too (it
+        // must also be added to the dashboard's Redirect URLs allow-list,
+        // or Supabase ignores this and falls back to Site URL anyway).
+        // Deriving it live from window.location, same trick already used
+        // for the Google OAuth redirect and the QR code button, means this
+        // keeps working even if the site's URL ever changes.
+        emailRedirectTo:
+          Platform.OS === 'web' && typeof window !== 'undefined'
+            ? `${window.location.origin}${window.location.pathname}`
+            : undefined,
+      },
     });
     return { error: error?.message ?? null };
   },
