@@ -119,6 +119,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 20,
     borderRightWidth: 1,
+    // Without this, the quick-add menu below (an absolutely positioned
+    // overlay escaping the rail's right edge) paints BEHIND the main
+    // content column next to it — that column is a later sibling in the
+    // same flex row, and with every view at the default z-index:auto,
+    // stacking falls back to document order rather than visual intent.
+    zIndex: 10,
   },
   brandMark: { width: 34, height: 26 },
   addBtn: {
