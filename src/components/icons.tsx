@@ -175,3 +175,53 @@ export function QrCodeIcon({ size, color = '#000' }: IconProps) {
     </Svg>
   );
 }
+
+export function MicIcon({ size, color = '#000' }: IconProps) {
+  return (
+    <Svg {...base(size, color)}>
+      <Path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+      <Path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <Path d="M12 19v4M8 23h8" />
+    </Svg>
+  );
+}
+
+export function CameraIcon({ size, color = '#000' }: IconProps) {
+  return (
+    <Svg {...base(size, color)}>
+      <Path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+      <Circle cx="12" cy="13" r="4" />
+    </Svg>
+  );
+}
+
+export function ImageIcon({ size, color = '#000' }: IconProps) {
+  return (
+    <Svg {...base(size, color)}>
+      <Rect x="3" y="3" width="18" height="18" rx="2" />
+      <Circle cx="8.5" cy="8.5" r="1.5" />
+      <Path d="M21 15l-5-5L5 21" />
+    </Svg>
+  );
+}
+
+export function PaletteIcon({ size, color = '#000' }: IconProps) {
+  return (
+    <Svg {...base(size, color)}>
+      <Path d="M12 2a10 10 0 1 0 0 20c1.5 0 2-1 2-2s-.5-1.5-.5-2.5A2.5 2.5 0 0 1 16 15h2a4 4 0 0 0 4-4 9 9 0 0 0-10-9z" />
+      <Circle cx="7.5" cy="10.5" r="1" />
+      <Circle cx="11" cy="7" r="1" />
+      <Circle cx="15.5" cy="8" r="1" />
+      <Circle cx="17.5" cy="12" r="1" />
+    </Svg>
+  );
+}
+
+export function DevicesIcon({ size, color = '#000' }: IconProps) {
+  return (
+    <Svg {...base(size, color)}>
+      <Rect x="2" y="4" width="14" height="16" rx="2" />
+      <Rect x="17" y="9" width="5" height="11" rx="1.5" />
+    </Svg>
+  );
+}
