@@ -1,11 +1,15 @@
 // A plain-language guide to what each screen does and how to get around —
 // opened from the "?" button in Sidebar.tsx (desktop) right above Settings.
-// Static content, no store reads beyond theme — nothing here needs to be
-// kept in sync with live data.
-import React from 'react';
-import { SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+// Mostly static content, no store reads beyond theme — the one exception is
+// the feedback box at the bottom, which writes to the `feedback` table (see
+// supabase/migrate_v9.sql) so suggestions/bug reports land somewhere
+// checkable without needing an email service for a prototype-stage app.
+import React, { useState } from 'react';
+import { ActivityIndicator, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable } from 'react-native';
 import { TopBar } from '../components/TopBar';
 import { useTheme } from '../theme/ThemeProvider';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
   BoardsIcon,
   CalendarIcon,
@@ -14,6 +18,7 @@ import {
   DevicesIcon,
   HomeIcon,
   MealIcon,
+  MessageIcon,
   MicIcon,
   QrCodeIcon,
   SettingsIcon,
@@ -23,6 +28,21 @@ type Topic = { Icon: React.ComponentType<{ size?: number; color?: string }>; tin
 
 export function HelpScreen() {
   const theme = useTheme();
+  const [message, setMessage] = useState('');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+
+  const submitFeedback = async () => {
+    const trimmed = message.trim();
+    if (!trimmed || status === 'sending') return;
+    setStatus('sending');
+    const { error } = await supabase.from('feedback').insert({ message: trimmed });
+    if (error) {
+      setStatus('error');
+      return;
+    }
+    setMessage('');
+    setStatus('sent');
+  };
 
   const topics: Topic[] = [
     {
@@ -121,6 +141,59 @@ export function HelpScreen() {
             </View>
           </View>
         ))}
+
+        {isSupabaseConfigured && (
+          <View style={[styles.card, styles.feedbackCard, { backgroundColor: theme.colors.panel, borderColor: theme.colors.border }]}>
+            <View style={[styles.iconWrap, { backgroundColor: theme.colors.accentBg }]}>
+              <MessageIcon size={20} color={theme.colors.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 15.5, color: theme.colors.ink, marginBottom: 5 }}>
+                Have a suggestion or found a bug?
+              </Text>
+              <Text style={{ fontFamily: theme.fonts.body, fontSize: 13.5, color: theme.colors.inkSoft, lineHeight: 20, marginBottom: 12 }}>
+                This is still early days for Huddle — tell us what's missing, confusing, or broken.
+              </Text>
+              <TextInput
+                value={message}
+                onChangeText={(t) => {
+                  setMessage(t);
+                  if (status !== 'idle') setStatus('idle');
+                }}
+                placeholder="Type your feedback here…"
+                placeholderTextColor={theme.colors.inkSoft}
+                multiline
+                numberOfLines={3}
+                style={[
+                  styles.feedbackInput,
+                  { borderColor: theme.colors.border, color: theme.colors.ink, fontFamily: theme.fonts.body },
+                ]}
+              />
+              <View style={styles.feedbackRow}>
+                <Pressable
+                  onPress={submitFeedback}
+                  disabled={!message.trim() || status === 'sending'}
+                  style={[
+                    styles.feedbackBtn,
+                    { backgroundColor: theme.colors.accent, opacity: !message.trim() || status === 'sending' ? 0.5 : 1 },
+                  ]}
+                >
+                  {status === 'sending' ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={{ fontFamily: theme.fonts.bodySemiBold, fontSize: 13.5, color: '#fff' }}>Send feedback</Text>
+                  )}
+                </Pressable>
+                {status === 'sent' && (
+                  <Text style={{ fontFamily: theme.fonts.body, fontSize: 13, color: theme.colors.inkSoft }}>Thanks — got it!</Text>
+                )}
+                {status === 'error' && (
+                  <Text style={{ fontFamily: theme.fonts.body, fontSize: 13, color: '#C0392B' }}>Couldn't send, try again.</Text>
+                )}
+              </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -141,4 +214,22 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   iconWrap: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  feedbackCard: { marginTop: 8 },
+  feedbackInput: {
+    borderWidth: 1.5,
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 13.5,
+    minHeight: 72,
+    textAlignVertical: 'top',
+    marginBottom: 10,
+  },
+  feedbackRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  feedbackBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });
