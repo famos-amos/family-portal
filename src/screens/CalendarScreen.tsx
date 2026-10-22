@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { FlatList, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/types';
 import { TopBar } from '../components/TopBar';
@@ -25,20 +25,21 @@ import {
 } from '../lib/icsCalendar';
 import {
   addDays,
-  buildMonthGrid,
   buildWeekGrid,
   formatDayTitle,
   formatHalfHourLabel,
   formatMonthTitle,
   formatWeekTitle,
   parseClockTime,
+  startOfWeek,
   toIso,
   todayIso,
 } from '../lib/date';
 import { CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from '../components/icons';
 import { PrimaryButton, SegmentedControl } from '../components/ui';
 import { confirmAction, notify } from '../lib/alerts';
-import { useColumnWidth } from '../lib/layout';
+import { NARROW_BREAKPOINT, useColumnWidth } from '../lib/layout';
+import { SIDEBAR_WIDTH } from '../components/Sidebar';
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -47,6 +48,38 @@ const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const ROW_HEIGHT = 56;
 const SLOT_COUNT = 48; // 24h * 2 half-hour slots
 const AGENDA_GUTTER = 64; // width reserved for the time-of-day labels
+
+// Month view is a continuously scrolling list of week rows (like Outlook's
+// month view) rather than one static 6-week grid — it opens scrolled to the
+// current week instead of showing the whole month, including already-past
+// weeks, every time. These control the initial window and how many more
+// weeks get appended/prepended as the user scrolls near either end.
+const MONTH_VIEW_WEEKS_BEFORE = 4;
+const MONTH_VIEW_WEEKS_AFTER = 20;
+const MONTH_VIEW_LOAD_CHUNK = 8;
+
+type WeekRow = { sunday: Date; monthKey: string };
+
+// Which month "owns" a given Sunday-first week, for the month label that
+// floats in the toolbar as you scroll — a week spanning a month boundary is
+// attributed to the month containing its Wednesday.
+function weekMonthKey(sunday: Date): string {
+  const rep = addDays(sunday, 3);
+  return `${rep.getFullYear()}-${rep.getMonth()}`;
+}
+
+function monthKeyToDate(key: string): Date {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m, 1);
+}
+
+function buildWeeksAround(anchorSunday: Date, before: number, after: number): WeekRow[] {
+  const start = addDays(anchorSunday, -7 * before);
+  return Array.from({ length: before + after + 1 }, (_, i) => {
+    const sunday = addDays(start, i * 7);
+    return { sunday, monthKey: weekMonthKey(sunday) };
+  });
+}
 
 export function CalendarScreen() {
   const theme = useTheme();
@@ -85,6 +118,40 @@ export function CalendarScreen() {
   const [subName, setSubName] = useState('');
   const [subUrl, setSubUrl] = useState('');
   const [subBusy, setSubBusy] = useState(false);
+
+  // Month view's continuously scrolling week list (see MONTH_VIEW_* consts
+  // above) — starts centered so the current week lands at the top of the
+  // viewport rather than the whole month, past weeks included.
+  const [monthWeeks, setMonthWeeks] = useState<WeekRow[]>(() =>
+    buildWeeksAround(startOfWeek(new Date()), MONTH_VIEW_WEEKS_BEFORE, MONTH_VIEW_WEEKS_AFTER),
+  );
+  const [visibleMonthKey, setVisibleMonthKey] = useState(() => weekMonthKey(startOfWeek(new Date())));
+  const [pendingMonthKey, setPendingMonthKey] = useState<string | null>(null);
+  const monthListRef = useRef<FlatList<WeekRow>>(null);
+
+  // Re-center the month scroller when arriving with a specific date (e.g.
+  // the home "Today's Events" widget deep-linking into a day).
+  React.useEffect(() => {
+    if (!params?.date || params.view !== 'month') return;
+    const anchor = startOfWeek(new Date(`${params.date}T12:00:00`));
+    const key = weekMonthKey(anchor);
+    setMonthWeeks(buildWeeksAround(anchor, MONTH_VIEW_WEEKS_BEFORE, MONTH_VIEW_WEEKS_AFTER));
+    setVisibleMonthKey(key);
+    setPendingMonthKey(key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.date, params?.view, params?.ts]);
+
+  // Runs after monthWeeks/pendingMonthKey settle (from the effect above, or
+  // from navigate() below) — jumps the list to the first week belonging to
+  // that month once it's actually present in the data.
+  React.useEffect(() => {
+    if (!pendingMonthKey) return;
+    const index = monthWeeks.findIndex((w) => w.monthKey === pendingMonthKey);
+    if (index !== -1) {
+      monthListRef.current?.scrollToIndex({ index, animated: true });
+      setPendingMonthKey(null);
+    }
+  }, [pendingMonthKey, monthWeeks]);
 
   const events = useCalendarStore((s) => s.events);
   const addEvent = useCalendarStore((s) => s.addEvent);
@@ -162,16 +229,19 @@ export function CalendarScreen() {
     return 'This app only';
   };
 
-  const grid = useMemo(
-    () => buildMonthGrid(cursor.getFullYear(), cursor.getMonth()),
-    [cursor.getFullYear(), cursor.getMonth()],
-  );
-
   // Measured integer column width for the 7-across month/week grid — a
   // `${100 / 7}%` style wraps Saturday onto its own row in Expo Go (see
   // useColumnWidth).
   const [dayColWidth, onGridLayout] = useColumnWidth(7);
   const dayColStyle = dayColWidth != null ? { flexGrow: 0, flexShrink: 0, flexBasis: dayColWidth, width: dayColWidth } : null;
+  const { width: windowWidth } = useWindowDimensions();
+  // Square day cells (aspectRatio: 1) make each week row's height equal to
+  // the measured column width — before that first measurement lands, guess
+  // from the window width (minus the sidebar, on the wide layout) so
+  // getItemLayout/initialScrollIndex below have a sane non-zero value from
+  // the very first frame instead of collapsing to 0.
+  const contentWidthGuess = windowWidth - (windowWidth >= NARROW_BREAKPOINT ? SIDEBAR_WIDTH : 0) - 24 * 2 - 14 * 2;
+  const weekRowHeight = dayColWidth ?? Math.floor(contentWidthGuess / 7);
 
   const calToggles = { google, apple, subscribedCalendars, hiddenGoogleCalendarIds };
   const visibleEvents = events.filter(
@@ -294,19 +364,145 @@ export function CalendarScreen() {
     );
 
   const today = todayIso();
-  const days = view === 'month' ? grid : view === 'week' ? buildWeekGrid(cursor) : [];
 
   // What Prev/Next mean, and what the header reads, both depend on which
-  // view is active — a single browsable cursor rather than three separate
-  // ones, so switching views keeps you looking at (roughly) the same date.
+  // view is active. Month doesn't use `cursor` at all any more — it tracks
+  // its own scroll position (visibleMonthKey) since it's a continuous list
+  // of weeks rather than a single static page.
   const navigate = (delta: number) => {
-    if (view === 'month') setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
-    else if (view === 'week') setCursor(addDays(cursor, delta * 7));
+    if (view === 'month') {
+      const base = monthKeyToDate(visibleMonthKey);
+      const target = new Date(base.getFullYear(), base.getMonth() + delta, 1);
+      const targetKey = `${target.getFullYear()}-${target.getMonth()}`;
+      const existingIndex = monthWeeks.findIndex((w) => w.monthKey === targetKey);
+      if (existingIndex !== -1) {
+        monthListRef.current?.scrollToIndex({ index: existingIndex, animated: true });
+      } else {
+        setPendingMonthKey(targetKey);
+        setMonthWeeks((prev) => {
+          if (!prev.length) return prev;
+          const count = MONTH_VIEW_LOAD_CHUNK * 5; // plenty to reach one month away
+          if (delta > 0) {
+            const last = prev[prev.length - 1].sunday;
+            const extra = Array.from({ length: count }, (_, i) => {
+              const sunday = addDays(last, 7 * (i + 1));
+              return { sunday, monthKey: weekMonthKey(sunday) };
+            });
+            return [...prev, ...extra];
+          }
+          const first = prev[0].sunday;
+          const extra = Array.from({ length: count }, (_, i) => {
+            const sunday = addDays(first, -7 * (count - i));
+            return { sunday, monthKey: weekMonthKey(sunday) };
+          });
+          return [...extra, ...prev];
+        });
+      }
+    } else if (view === 'week') setCursor(addDays(cursor, delta * 7));
     else setCursor(addDays(cursor, delta));
   };
-  const titleText = view === 'month' ? formatMonthTitle(cursor) : view === 'week' ? formatWeekTitle(cursor) : formatDayTitle(cursor);
+  const titleText =
+    view === 'month' ? formatMonthTitle(monthKeyToDate(visibleMonthKey)) : view === 'week' ? formatWeekTitle(cursor) : formatDayTitle(cursor);
 
   const anyHidden = family.some((m) => hidden.includes(m.id)) || hiddenGoogleCalendarIds.length > 0;
+
+  // One day cell — shared by the week view's single static row and the
+  // month view's scrolling week rows below, so both stay visually identical.
+  const renderDayCell = (date: Date, isWeekView: boolean) => {
+    const iso = toIso(date);
+    const isToday = iso === today;
+    const dayEvents = visibleEvents.filter((e) => e.date === iso);
+    const maxShown = isWeekView ? 6 : 3;
+    return (
+      <Pressable
+        key={iso}
+        onPress={() => {
+          setSelectedDate(iso);
+          setPrefillTime(undefined);
+          setAddOpen(true);
+        }}
+        style={[
+          styles.dayCell,
+          dayColStyle,
+          isWeekView && styles.dayCellWeek,
+          { backgroundColor: theme.isDark ? '#FFFFFF08' : '#FBF7EF' },
+          isToday && { backgroundColor: theme.colors.calBg, borderWidth: 2, borderColor: theme.colors.cal },
+        ]}
+      >
+        <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.ink }}>
+          {date.getDate() === 1 ? date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : date.getDate()}
+        </Text>
+        {dayEvents.slice(0, maxShown).map((e) => {
+          const people = family.filter((m) => e.personIds.includes(m.id));
+          const chipColor = people[0]?.color ?? eventCalendarColor(e, google.calendars, googleCalendarColors) ?? theme.colors.inkSoft;
+          return (
+            <Pressable
+              key={e.id}
+              // Tapping an event opens it for editing rather than the day's
+              // "add new event" modal — this Pressable being nested inside
+              // the day cell's own Pressable is enough for React Native's
+              // touch responder to award the tap to whichever one was
+              // actually touched.
+              onPress={() => setEditing(e)}
+              style={[styles.chip, { backgroundColor: chipColor + '30' }]}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1 }}>
+                {people.length > 1 &&
+                  people.slice(0, 4).map((p) => <View key={p.id} style={[styles.chipDot, { backgroundColor: p.color }]} />)}
+                <Text
+                  numberOfLines={1}
+                  style={{ fontSize: 9.5, fontFamily: theme.fonts.bodyBold, color: people[0]?.color ?? theme.colors.ink, flexShrink: 1 }}
+                >
+                  {e.time ? `${e.time} ` : ''}
+                  {e.title}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
+        {dayEvents.length > maxShown && (
+          <Text style={{ fontSize: 9, fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }}>
+            +{dayEvents.length - maxShown} more
+          </Text>
+        )}
+      </Pressable>
+    );
+  };
+
+  // Grow the month scroller 8 weeks at a time as the user nears the bottom
+  // — this is what makes scrolling down keep moving into later months
+  // instead of stopping at a fixed window.
+  //
+  // There's deliberately no equivalent "prepend more weeks on scroll up":
+  // react-native-web's FlatList doesn't support maintainVisibleContentPosition,
+  // so prepending mid-scroll would visibly jolt the viewport. The initial
+  // MONTH_VIEW_WEEKS_BEFORE buffer covers normal "glance back a bit"
+  // scrolling, and the toolbar's Previous button still reaches further back
+  // via an explicit scrollToIndex jump (see navigate()), which has no such
+  // issue since it's not a content-preserving scroll.
+  const handleMonthEndReached = useCallback(() => {
+    setMonthWeeks((prev) => {
+      if (!prev.length) return prev;
+      const last = prev[prev.length - 1].sunday;
+      const extra = Array.from({ length: MONTH_VIEW_LOAD_CHUNK }, (_, i) => {
+        const sunday = addDays(last, 7 * (i + 1));
+        return { sunday, monthKey: weekMonthKey(sunday) };
+      });
+      return [...prev, ...extra];
+    });
+  }, []);
+  const monthGetItemLayout = useCallback(
+    (_: ArrayLike<WeekRow> | null | undefined, index: number) => ({ length: weekRowHeight, offset: weekRowHeight * index, index }),
+    [weekRowHeight],
+  );
+  // The toolbar's month label tracks whichever week is topmost on screen —
+  // refs (not state) because FlatList requires both props to keep a stable
+  // identity across renders.
+  const monthViewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
+  const onMonthViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ item: WeekRow }> }) => {
+    const first = viewableItems[0]?.item;
+    if (first) setVisibleMonthKey(first.monthKey);
+  }).current;
 
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.colors.bg }]}>
@@ -509,11 +705,10 @@ export function CalendarScreen() {
           }}
         />
       ) : (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.gridWrap} stickyHeaderIndices={[0]}>
-          {/* A direct ScrollView child (not nested inside the grid card) so
-              stickyHeaderIndices can pin it — on a tall month grid you'd
-              otherwise scroll the weekday labels away and have to scroll
-              back up to remember which column is which day. */}
+        <View style={[styles.scroll, styles.gridWrap]}>
+          {/* The weekday header sits outside any scroll container — always
+              pinned, no stickyHeaderIndices needed — above either the week
+              view's single static row or the month view's scrolling list. */}
           <View style={[styles.dowRow, { backgroundColor: theme.colors.panel }]}>
             {DOW.map((d) => (
               <Text
@@ -524,77 +719,36 @@ export function CalendarScreen() {
               </Text>
             ))}
           </View>
-          <View style={[styles.gridCard, { backgroundColor: theme.colors.panel }]}>
-            <View style={styles.monthGrid} onLayout={onGridLayout}>
-              {days.map(({ date, inMonth }, i) => {
-                const iso = toIso(date);
-                const isToday = iso === today;
-                const dayEvents = visibleEvents.filter((e) => e.date === iso);
-                return (
-                  <Pressable
-                    key={i}
-                    onPress={() => {
-                      setSelectedDate(iso);
-                      setPrefillTime(undefined);
-                      setAddOpen(true);
-                    }}
-                    style={[
-                      styles.dayCell,
-                      dayColStyle,
-                      view === 'week' && styles.dayCellWeek,
-                      { backgroundColor: theme.isDark ? '#FFFFFF08' : '#FBF7EF' },
-                      isToday && { backgroundColor: theme.colors.calBg, borderWidth: 2, borderColor: theme.colors.cal },
-                      !inMonth && view === 'month' && { opacity: 0.4 },
-                    ]}
-                  >
-                    <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.ink }}>
-                      {date.getDate()}
-                    </Text>
-                    {dayEvents.slice(0, view === 'week' ? 6 : 3).map((e) => {
-                      const people = family.filter((m) => e.personIds.includes(m.id));
-                      const chipColor =
-                        people[0]?.color ??
-                        eventCalendarColor(e, google.calendars, googleCalendarColors) ??
-                        theme.colors.inkSoft;
-                      return (
-                        <Pressable
-                          key={e.id}
-                          // Tapping an event opens it for editing rather than
-                          // the day's "add new event" modal — this Pressable
-                          // being nested inside the day cell's own Pressable
-                          // is enough for React Native's touch responder to
-                          // award the tap to whichever one was actually
-                          // touched.
-                          onPress={() => setEditing(e)}
-                          style={[styles.chip, { backgroundColor: chipColor + '30' }]}
-                        >
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1 }}>
-                            {people.length > 1 &&
-                              people.slice(0, 4).map((p) => (
-                                <View key={p.id} style={[styles.chipDot, { backgroundColor: p.color }]} />
-                              ))}
-                            <Text
-                              numberOfLines={1}
-                              style={{ fontSize: 9.5, fontFamily: theme.fonts.bodyBold, color: people[0]?.color ?? theme.colors.ink, flexShrink: 1 }}
-                            >
-                              {e.time ? `${e.time} ` : ''}
-                              {e.title}
-                            </Text>
-                          </View>
-                        </Pressable>
-                      );
-                    })}
-                    {dayEvents.length > (view === 'week' ? 6 : 3) && (
-                      <Text style={{ fontSize: 9, fontFamily: theme.fonts.bodyBold, color: theme.colors.inkSoft }}>
-                        +{dayEvents.length - (view === 'week' ? 6 : 3)} more
-                      </Text>
-                    )}
-                  </Pressable>
-                );
-              })}
-            </View>
+          <View style={[styles.gridCard, styles.gridCardScrollable, { backgroundColor: theme.colors.panel }]}>
+            {view === 'week' ? (
+              <ScrollView style={styles.scroll} contentContainerStyle={styles.gridWrapInner}>
+                <View style={styles.monthGrid} onLayout={onGridLayout}>
+                  {buildWeekGrid(cursor).map(({ date }) => renderDayCell(date, true))}
+                </View>
+              </ScrollView>
+            ) : (
+              <FlatList
+                ref={monthListRef}
+                data={monthWeeks}
+                keyExtractor={(w) => toIso(w.sunday)}
+                renderItem={({ item }) => (
+                  <View style={[styles.monthGrid, { height: weekRowHeight }]}>
+                    {Array.from({ length: 7 }, (_, i) => renderDayCell(addDays(item.sunday, i), false))}
+                  </View>
+                )}
+                getItemLayout={monthGetItemLayout}
+                initialScrollIndex={MONTH_VIEW_WEEKS_BEFORE}
+                onLayout={onGridLayout}
+                onEndReached={handleMonthEndReached}
+                onEndReachedThreshold={2}
+                onViewableItemsChanged={onMonthViewableItemsChanged}
+                viewabilityConfig={monthViewabilityConfig}
+                style={styles.scroll}
+                contentContainerStyle={styles.gridWrapInner}
+              />
+            )}
           </View>
-        </ScrollView>
+        </View>
       )}
 
       <EventFormModal
@@ -1130,9 +1284,13 @@ const styles = StyleSheet.create({
   legendBox: { width: 15, height: 15, borderRadius: 5, borderWidth: 2, borderColor: '#00000022', alignItems: 'center', justifyContent: 'center' },
   filterHint: { fontSize: 11.5, paddingHorizontal: 24, marginBottom: 8 },
   gridWrap: { paddingHorizontal: 24, paddingBottom: 24 },
-  // No top padding/radius — dowRow (pinned above it via stickyHeaderIndices)
-  // supplies those so the two read as one continuous card.
+  // No top padding/radius — dowRow (rendered as a fixed sibling right above
+  // it) supplies those so the two read as one continuous card.
   gridCard: { borderBottomLeftRadius: 22, borderBottomRightRadius: 22, padding: 14, paddingTop: 0 },
+  // gridCard fills the remaining space below the toolbar/dowRow instead of
+  // being sized by its (now internally scrolling) content.
+  gridCardScrollable: { flex: 1, minHeight: 0 },
+  gridWrapInner: { paddingBottom: 8 },
   dowRow: {
     flexDirection: 'row',
     paddingHorizontal: 14,
