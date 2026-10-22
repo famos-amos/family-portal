@@ -9,7 +9,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../theme/ThemeProvider';
 import { RootStackParamList } from '../navigation/types';
-import { BoardsIcon, CalendarIcon, ChoresIcon, HomeIcon, MealIcon, PlusIcon, SettingsIcon } from './icons';
+import { BoardsIcon, CalendarIcon, ChoresIcon, HomeIcon, MealIcon, PlusIcon, QuestionIcon, SettingsIcon } from './icons';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -102,6 +102,9 @@ export function Sidebar({ activeRouteName }: { activeRouteName: string | undefin
         })}
       </View>
 
+      <Pressable onPress={() => navigation.navigate('Help')} style={styles.settingsBtn} hitSlop={6}>
+        <QuestionIcon size={20} color={activeRouteName === 'Help' ? theme.colors.accent : theme.colors.inkSoft} />
+      </Pressable>
       <Pressable onPress={() => navigation.navigate('Settings')} style={styles.settingsBtn} hitSlop={6}>
         <SettingsIcon size={20} color={activeRouteName === 'Settings' ? theme.colors.accent : theme.colors.inkSoft} />
       </Pressable>

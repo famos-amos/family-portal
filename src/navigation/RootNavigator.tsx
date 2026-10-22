@@ -8,6 +8,7 @@ import { CalendarScreen } from '../screens/CalendarScreen';
 import { ChoresScreen } from '../screens/ChoresScreen';
 import { MealPlansScreen } from '../screens/MealPlansScreen';
 import { BoardsScreen } from '../screens/BoardsScreen';
+import { HelpScreen } from '../screens/HelpScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { GroceryListScreen } from '../screens/GroceryListScreen';
 import { RecipesScreen } from '../screens/RecipesScreen';
@@ -45,6 +46,7 @@ export function RootNavigator() {
               <Stack.Screen name="Chores">{() => <TabSwipeWrapper><ChoresScreen /></TabSwipeWrapper>}</Stack.Screen>
               <Stack.Screen name="MealPlans">{() => <TabSwipeWrapper><MealPlansScreen /></TabSwipeWrapper>}</Stack.Screen>
               <Stack.Screen name="Boards">{() => <TabSwipeWrapper><BoardsScreen /></TabSwipeWrapper>}</Stack.Screen>
+              <Stack.Screen name="Help" component={HelpScreen} />
               <Stack.Screen name="Settings" component={SettingsScreen} />
               <Stack.Screen name="GroceryList" component={GroceryListScreen} />
               <Stack.Screen name="Recipes" component={RecipesScreen} />

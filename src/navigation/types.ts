@@ -14,6 +14,7 @@ export type RootStackParamList = {
   Chores: undefined;
   MealPlans: undefined;
   Boards: undefined;
+  Help: undefined;
   Settings: undefined;
   GroceryList: undefined;
   Recipes: undefined;
