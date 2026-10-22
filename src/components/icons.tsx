@@ -94,6 +94,14 @@ export function ChevronRightIcon({ size, color = '#000' }: IconProps) {
   );
 }
 
+export function ChevronDownIcon({ size, color = '#000' }: IconProps) {
+  return (
+    <Svg {...base(size, color)} strokeWidth={3}>
+      <Path d="M6 9l6 6 6-6" />
+    </Svg>
+  );
+}
+
 export function CheckIcon({ size, color = '#000' }: IconProps) {
   return (
     <Svg {...base(size, color)} strokeWidth={3}>

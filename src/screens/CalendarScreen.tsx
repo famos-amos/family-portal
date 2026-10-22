@@ -35,7 +35,7 @@ import {
   toIso,
   todayIso,
 } from '../lib/date';
-import { CalendarIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from '../components/icons';
+import { CalendarIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from '../components/icons';
 import { PrimaryButton, SegmentedControl } from '../components/ui';
 import { confirmAction, notify } from '../lib/alerts';
 import { NARROW_BREAKPOINT, useColumnWidth } from '../lib/layout';
@@ -185,6 +185,7 @@ export function CalendarScreen() {
   const setGoogleCalendarColor = useSettingsStore((s) => s.setGoogleCalendarColor);
   const resetGoogleCalendarColor = useSettingsStore((s) => s.resetGoogleCalendarColor);
   const [colorPickerFor, setColorPickerFor] = useState<{ id: string; name: string } | null>(null);
+  const [calendarsMenuOpen, setCalendarsMenuOpen] = useState(false);
 
   // Refresh the followed public calendars whenever this screen opens.
   React.useEffect(() => {
@@ -541,121 +542,129 @@ export function CalendarScreen() {
           </Pressable>
         </View>
         <View style={{ flex: 1 }} />
-        <View style={styles.legend}>
-          {family.map((m) => {
-            const on = !hidden.includes(m.id);
-            return (
-              <Pressable
-                key={m.id}
-                onPress={() => toggleVisibility(m.id)}
-                style={[
-                  styles.legendChip,
-                  { backgroundColor: on ? (theme.isDark ? '#FFFFFF14' : '#FFFFFFB0') : 'transparent', opacity: on ? 1 : 0.45 },
-                ]}
-              >
-                <View style={[styles.legendBox, on && { backgroundColor: m.color, borderColor: 'transparent' }]}>
-                  {on && <CheckIcon size={10} color="#fff" />}
-                </View>
-                <Text
-                  style={{
-                    fontFamily: theme.fonts.headSemiBold,
-                    fontSize: 12.5,
-                    color: theme.colors.ink,
-                    textDecorationLine: on ? 'none' : 'line-through',
-                  }}
-                >
-                  {m.name}
-                </Text>
-              </Pressable>
-            );
-          })}
 
-          {/* Google's own sub-calendars (Work, Personal, School, …) — same
-              checkbox style as the family filters right next to them. */}
-          {google.connected &&
-            google.enabled !== false &&
-            (google.calendars ?? []).map((c, i) => {
-              const on = !hiddenGoogleCalendarIds.includes(c.id);
-              // Same formula eventCalendarColor uses, so a chip always
-              // matches the color its own events are drawn in.
-              const color = googleCalendarColors[c.id] || c.color || personColorOptions[i % personColorOptions.length];
-              return (
-                <Pressable
-                  key={c.id}
-                  onPress={() => toggleGoogleCalendarVisibility(c.id)}
-                  style={[
-                    styles.legendChip,
-                    { backgroundColor: on ? (theme.isDark ? '#FFFFFF14' : '#FFFFFFB0') : 'transparent', opacity: on ? 1 : 0.45 },
-                  ]}
-                >
-                  {/* Its own tap target (nested Pressables resolve to whichever
-                      one was actually touched, same pattern as the event chips
-                      below) — tap the color to customize it, tap the rest of
-                      the chip to show/hide the calendar. */}
-                  <Pressable onPress={() => setColorPickerFor({ id: c.id, name: c.summary })} hitSlop={6}>
-                    <View style={[styles.legendBox, on && { backgroundColor: color, borderColor: 'transparent' }]}>
-                      {on && <CheckIcon size={10} color="#fff" />}
-                    </View>
-                  </Pressable>
-                  <Text
-                    style={{
-                      fontFamily: theme.fonts.headSemiBold,
-                      fontSize: 12.5,
-                      color: theme.colors.ink,
-                      textDecorationLine: on ? 'none' : 'line-through',
-                    }}
-                  >
-                    {c.summary}
-                  </Text>
-                </Pressable>
-              );
-            })}
-        </View>
-
-        {/* Public (subscribed) calendars — toggle on/off, or add one by link */}
-        <View style={styles.legend}>
-          {subscribedCalendars.map((c) => (
-            <Pressable
-              key={c.id}
-              onPress={() => toggleSubscribedCalendarWithRefresh(c.id)}
-              onLongPress={() => removePublicCalendar(c.id, c.name)}
-              style={[
-                styles.legendChip,
-                {
-                  backgroundColor: c.enabled ? (theme.isDark ? '#FFFFFF14' : '#FFFFFFB0') : 'transparent',
-                  opacity: c.enabled ? 1 : 0.45,
-                },
-              ]}
-            >
-              <View
-                style={[
-                  styles.legendBox,
-                  c.enabled && { backgroundColor: c.color, borderColor: 'transparent' },
-                ]}
-              >
-                {c.enabled && <CheckIcon size={10} color="#fff" />}
-              </View>
-              <Text
-                style={{
-                  fontFamily: theme.fonts.headSemiBold,
-                  fontSize: 12.5,
-                  color: theme.colors.ink,
-                  textDecorationLine: c.enabled ? 'none' : 'line-through',
-                }}
-              >
-                {c.name}
-              </Text>
-            </Pressable>
-          ))}
+        {/* Which family members' events show, and which calendar sources
+            (Google, public/subscribed) are included — collapsed into a
+            dropdown so the toolbar stays one row instead of wrapping into
+            a second line of chips. */}
+        <View>
           <Pressable
-            onPress={() => setSubModalOpen(true)}
-            style={[styles.legendChip, { backgroundColor: theme.isDark ? '#FFFFFF10' : '#FFFFFF80' }]}
+            onPress={() => setCalendarsMenuOpen((v) => !v)}
+            style={[styles.calendarsBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.panel }]}
           >
-            <PlusIcon size={11} color={theme.colors.inkSoft} />
-            <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12.5, color: theme.colors.inkSoft }}>
-              Add calendar
-            </Text>
+            <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.ink }}>Calendars</Text>
+            {anyHidden && <View style={[styles.calendarsDot, { backgroundColor: theme.colors.accent }]} />}
+            <ChevronDownIcon size={12} color={theme.colors.inkSoft} />
           </Pressable>
+          {calendarsMenuOpen && (
+            <>
+              <Pressable style={styles.calendarsMenuScrim} onPress={() => setCalendarsMenuOpen(false)} />
+              <View style={[styles.calendarsMenu, { backgroundColor: theme.colors.panel, borderColor: theme.colors.border }]}>
+                <ScrollView style={{ maxHeight: 380 }}>
+                  <Text style={[styles.calendarsMenuLabel, { color: theme.colors.inkSoft }]}>Family</Text>
+                  {family.map((m) => {
+                    const on = !hidden.includes(m.id);
+                    return (
+                      <Pressable key={m.id} onPress={() => toggleVisibility(m.id)} style={styles.calendarsRow}>
+                        {/* No color picker here on purpose — a member's
+                            color comes from Settings → Family, not from
+                            this menu. */}
+                        <View style={[styles.legendBox, on && { backgroundColor: m.color, borderColor: 'transparent' }]}>
+                          {on && <CheckIcon size={10} color="#fff" />}
+                        </View>
+                        <Text
+                          style={{
+                            fontFamily: theme.fonts.headSemiBold,
+                            fontSize: 13,
+                            color: theme.colors.ink,
+                            textDecorationLine: on ? 'none' : 'line-through',
+                          }}
+                        >
+                          {m.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+
+                  {google.connected && google.enabled !== false && (
+                    <>
+                      <Text style={[styles.calendarsMenuLabel, { color: theme.colors.inkSoft }]}>Google Calendar</Text>
+                      {(google.calendars ?? []).map((c, i) => {
+                        const on = !hiddenGoogleCalendarIds.includes(c.id);
+                        // Same formula eventCalendarColor uses, so this
+                        // swatch always matches the color its own events
+                        // are drawn in.
+                        const color = googleCalendarColors[c.id] || c.color || personColorOptions[i % personColorOptions.length];
+                        return (
+                          <Pressable key={c.id} onPress={() => toggleGoogleCalendarVisibility(c.id)} style={styles.calendarsRow}>
+                            {/* Its own tap target (nested Pressables resolve
+                                to whichever one was actually touched, same
+                                pattern as the event chips elsewhere) — tap
+                                the swatch to customize the color, tap the
+                                rest of the row to show/hide it. Google
+                                calendars (unlike family members) have no
+                                Settings-assigned color of their own, so they
+                                keep this picker. */}
+                            <Pressable onPress={() => setColorPickerFor({ id: c.id, name: c.summary })} hitSlop={6}>
+                              <View style={[styles.legendBox, on && { backgroundColor: color, borderColor: 'transparent' }]}>
+                                {on && <CheckIcon size={10} color="#fff" />}
+                              </View>
+                            </Pressable>
+                            <Text
+                              style={{
+                                fontFamily: theme.fonts.headSemiBold,
+                                fontSize: 13,
+                                color: theme.colors.ink,
+                                textDecorationLine: on ? 'none' : 'line-through',
+                              }}
+                            >
+                              {c.summary}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </>
+                  )}
+
+                  <Text style={[styles.calendarsMenuLabel, { color: theme.colors.inkSoft }]}>Other calendars</Text>
+                  {subscribedCalendars.map((c) => (
+                    <Pressable
+                      key={c.id}
+                      onPress={() => toggleSubscribedCalendarWithRefresh(c.id)}
+                      onLongPress={() => removePublicCalendar(c.id, c.name)}
+                      style={styles.calendarsRow}
+                    >
+                      <View style={[styles.legendBox, c.enabled && { backgroundColor: c.color, borderColor: 'transparent' }]}>
+                        {c.enabled && <CheckIcon size={10} color="#fff" />}
+                      </View>
+                      <Text
+                        style={{
+                          fontFamily: theme.fonts.headSemiBold,
+                          fontSize: 13,
+                          color: theme.colors.ink,
+                          textDecorationLine: c.enabled ? 'none' : 'line-through',
+                        }}
+                      >
+                        {c.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                  <Pressable
+                    onPress={() => {
+                      setCalendarsMenuOpen(false);
+                      setSubModalOpen(true);
+                    }}
+                    style={styles.calendarsRow}
+                  >
+                    <PlusIcon size={13} color={theme.colors.inkSoft} />
+                    <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.inkSoft }}>
+                      Add calendar
+                    </Text>
+                  </Pressable>
+                </ScrollView>
+              </View>
+            </>
+          )}
         </View>
 
         <Pressable
@@ -683,12 +692,6 @@ export function CalendarScreen() {
           }}
         />
       </View>
-
-      {anyHidden && (
-        <Text style={[styles.filterHint, { color: theme.colors.inkSoft, fontFamily: theme.fonts.bodyBold }]}>
-          Tap a name above to show or hide their events — some calendars are hidden right now.
-        </Text>
-      )}
 
       {view === 'day' ? (
         <DayAgenda
@@ -1274,15 +1277,43 @@ const styles = StyleSheet.create({
   // web (react-native-web needs a flex child with minHeight:0 to know it's
   // allowed to scroll internally instead of just growing past the screen).
   scroll: { flex: 1, minHeight: 0 },
-  toolbar: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 24, paddingBottom: 10, flexWrap: 'wrap' },
+  // zIndex keeps the Calendars dropdown (an absolutely-positioned child
+  // below) painting above the day/week/month grid underneath — without it,
+  // that later sibling paints on top regardless of the dropdown's own
+  // position, same root cause as the sidebar's quick-add menu bug.
+  toolbar: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 24, paddingBottom: 10, flexWrap: 'wrap', zIndex: 10 },
   resetBtn: { paddingHorizontal: 16, paddingVertical: 11, borderRadius: 14, borderWidth: 1.5 },
   syncWarning: { flexDirection: 'row', alignItems: 'center', gap: 14, marginHorizontal: 24, marginBottom: 10, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
   monthTitle: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   navBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#ffffffb0', alignItems: 'center', justifyContent: 'center' },
-  legend: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
-  legendChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999 },
   legendBox: { width: 15, height: 15, borderRadius: 5, borderWidth: 2, borderColor: '#00000022', alignItems: 'center', justifyContent: 'center' },
-  filterHint: { fontSize: 11.5, paddingHorizontal: 24, marginBottom: 8 },
+  calendarsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1.5,
+  },
+  calendarsDot: { width: 7, height: 7, borderRadius: 3.5 },
+  calendarsMenuScrim: { position: 'absolute', top: -1000, left: -1000, right: -1000, bottom: -1000 },
+  calendarsMenu: {
+    position: 'absolute',
+    right: 0,
+    top: 48,
+    width: 260,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  calendarsMenuLabel: { fontSize: 10.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 10, marginBottom: 2 },
+  calendarsRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, paddingHorizontal: 4 },
   gridWrap: { paddingHorizontal: 24, paddingBottom: 24 },
   // No top padding/radius — dowRow (rendered as a fixed sibling right above
   // it) supplies those so the two read as one continuous card.

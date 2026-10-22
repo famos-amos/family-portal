@@ -126,9 +126,11 @@ export function CalendarWidgetContent({ size }: { size: WidgetSize }) {
 
   return (
     <View style={{ flex: 1, minHeight: 0 }}>
-      <SectionTitle icon={<CalendarIcon size={wide ? 20 : 17} color={theme.colors.ink} />} tint={theme.colors.cal}>
-        Calendar
-      </SectionTitle>
+      <Pressable onPress={() => navigation.navigate('Calendar')}>
+        <SectionTitle icon={<CalendarIcon size={wide ? 20 : 17} color={theme.colors.ink} />} tint={theme.colors.cal}>
+          Calendar
+        </SectionTitle>
+      </Pressable>
       <SegmentedControl
         value={view}
         onChange={setView}
