@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { RootStackParamList } from '../navigation/types';
 import { TopBar } from '../components/TopBar';
 import { useTheme } from '../theme/ThemeProvider';
 import { useFamilyStore, useMealsStore } from '../store/useAppStore';
@@ -38,6 +39,17 @@ export function MealPlansScreen() {
   const today = dayOfWeek();
 
   const [editing, setEditing] = useState<{ day: DayOfWeek; slot: MealSlotType; meal?: Meal } | null>(null);
+
+  const params = useRoute<RouteProp<RootStackParamList, 'MealPlans'>>().params;
+  // Opened via the sidebar's quick-add menu — same default (today, dinner)
+  // as the toolbar's own "Add Meal" button. Cleared right after so
+  // revisiting this tab normally doesn't reopen it.
+  React.useEffect(() => {
+    if (!params?.openAdd) return;
+    setEditing({ day: today, slot: 'dinner' });
+    navigation.setParams({ openAdd: undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.openAdd]);
 
   // Measured integer column width for the 7-across planner — a `${100 / 7}%`
   // style wraps Sunday onto its own row in Expo Go (see useColumnWidth).

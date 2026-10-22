@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useRoute, type RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../navigation/types';
 import { TopBar } from '../components/TopBar';
 import { useTheme } from '../theme/ThemeProvider';
@@ -50,6 +50,7 @@ const AGENDA_GUTTER = 64; // width reserved for the time-of-day labels
 
 export function CalendarScreen() {
   const theme = useTheme();
+  const navigation = useNavigation<any>();
   const params = useRoute<RouteProp<RootStackParamList, 'Calendar'>>().params;
   const [cursor, setCursor] = useState(() =>
     params?.date ? new Date(`${params.date}T12:00:00`) : new Date(),
@@ -65,6 +66,18 @@ export function CalendarScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params?.view, params?.date, params?.ts]);
   const [addOpen, setAddOpen] = useState(false);
+
+  // Opened via the sidebar's quick-add menu — same defaults as the
+  // toolbar's own "Add Event" button. Cleared right after so revisiting
+  // this tab normally doesn't reopen it.
+  React.useEffect(() => {
+    if (!params?.openAdd) return;
+    setSelectedDate(params?.date ?? (view === 'day' ? toIso(cursor) : todayIso()));
+    setPrefillTime(undefined);
+    setAddOpen(true);
+    navigation.setParams({ openAdd: undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.openAdd]);
   const [selectedDate, setSelectedDate] = useState<string>(todayIso());
   const [prefillTime, setPrefillTime] = useState<string | undefined>(undefined);
   const [editing, setEditing] = useState<CalendarEvent | null>(null);

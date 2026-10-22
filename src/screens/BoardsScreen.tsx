@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { RootStackParamList } from '../navigation/types';
 import { TopBar } from '../components/TopBar';
 import { useTheme } from '../theme/ThemeProvider';
 import { useBoardsStore, useFamilyStore } from '../store/useAppStore';
@@ -25,6 +27,20 @@ export function BoardsScreen() {
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [editing, setEditing] = useState<BoardItem | null>(null);
   const [newColumnOpen, setNewColumnOpen] = useState(false);
+
+  const navigation = useNavigation<any>();
+  const params = useRoute<RouteProp<RootStackParamList, 'Boards'>>().params;
+  // Opened via the sidebar's quick-add menu ("Add To-Do") — defaults to the
+  // Family To-Do column (falling back to whichever column is first, in case
+  // it's ever renamed or removed). Cleared right after so revisiting this
+  // tab normally doesn't reopen it.
+  React.useEffect(() => {
+    if (!params?.openAdd) return;
+    const target = columns.find((c) => c.id === 'todo') ?? columns[0];
+    if (target) setAddingTo(target.id);
+    navigation.setParams({ openAdd: undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.openAdd]);
 
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.colors.bg }]}>

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { RootStackParamList } from '../navigation/types';
 import { TopBar } from '../components/TopBar';
 import { useTheme } from '../theme/ThemeProvider';
 import { useChoresStore, useFamilyStore } from '../store/useAppStore';
@@ -22,6 +24,19 @@ export function ChoresScreen() {
 
   const [addingFor, setAddingFor] = useState<string | null | 'new'>(null);
   const [editing, setEditing] = useState<Chore | null>(null);
+
+  const navigation = useNavigation<any>();
+  const params = useRoute<RouteProp<RootStackParamList, 'Chores'>>().params;
+  // Opened via the sidebar's quick-add menu (`{ openAdd: true }`) — jump
+  // straight to the add form instead of landing on the board and making
+  // them tap "Add chore" themselves. Cleared right after so revisiting
+  // this tab normally doesn't reopen it.
+  React.useEffect(() => {
+    if (!params?.openAdd) return;
+    setAddingFor('new');
+    navigation.setParams({ openAdd: undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.openAdd]);
 
   const totalStarsThisWeek = chores.filter((c) => c.done).reduce((sum, c) => sum + c.points, 0);
 

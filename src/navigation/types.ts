@@ -9,11 +9,15 @@ export type RootStackParamList = {
         /** Bump to force a re-sync when navigating to an already-mounted
          * Calendar screen with otherwise-identical params. */
         ts?: number;
+        /** Open the Add Event modal immediately on arrival — set by the
+         * sidebar's quick-add menu. The screen clears this itself once
+         * read, so it won't re-trigger on a later, param-less visit. */
+        openAdd?: boolean;
       }
     | undefined;
-  Chores: undefined;
-  MealPlans: undefined;
-  Boards: undefined;
+  Chores: { openAdd?: boolean } | undefined;
+  MealPlans: { openAdd?: boolean } | undefined;
+  Boards: { openAdd?: boolean } | undefined;
   Help: undefined;
   Settings: undefined;
   GroceryList: undefined;

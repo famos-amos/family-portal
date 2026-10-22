@@ -64,7 +64,7 @@ export function Sidebar({ activeRouteName }: { activeRouteName: string | undefin
                   key={t.route}
                   onPress={() => {
                     setAddOpen(false);
-                    navigation.navigate(t.route as any);
+                    navigation.navigate(t.route as any, { openAdd: true });
                   }}
                   style={styles.addMenuItem}
                 >
