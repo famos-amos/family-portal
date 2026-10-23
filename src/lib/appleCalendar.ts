@@ -16,8 +16,11 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { CalendarEvent } from '../store/types';
 import { todayIso } from './date';
+import { useCalendarStore, useProviderSyncStatusStore } from '../store/useAppStore';
 
-const CREDENTIAL_KEY = 'roost.appleCalendarCredentials';
+// One credential per connected account, not a single fixed key — see
+// GoogleAccount's parallel per-account token storage in useSettingsStore.
+const credentialKey = (accountId: string) => `roost.appleCalendarCredentials.${accountId}`;
 const PRINCIPAL_URL = 'https://caldav.icloud.com/';
 
 export type AppleCredentials = { appleId: string; appSpecificPassword: string };
@@ -49,17 +52,17 @@ async function storageDelete(key: string): Promise<void> {
   await SecureStore.deleteItemAsync(key);
 }
 
-export async function saveAppleCredentials(creds: AppleCredentials): Promise<void> {
-  await storageSet(CREDENTIAL_KEY, JSON.stringify(creds));
+export async function saveAppleCredentials(accountId: string, creds: AppleCredentials): Promise<void> {
+  await storageSet(credentialKey(accountId), JSON.stringify(creds));
 }
 
-export async function loadAppleCredentials(): Promise<AppleCredentials | null> {
-  const raw = await storageGet(CREDENTIAL_KEY);
+export async function loadAppleCredentials(accountId: string): Promise<AppleCredentials | null> {
+  const raw = await storageGet(credentialKey(accountId));
   return raw ? (JSON.parse(raw) as AppleCredentials) : null;
 }
 
-export async function clearAppleCredentials(): Promise<void> {
-  await storageDelete(CREDENTIAL_KEY);
+export async function clearAppleCredentials(accountId: string): Promise<void> {
+  await storageDelete(credentialKey(accountId));
 }
 
 function authHeader(creds: AppleCredentials): string {
@@ -115,10 +118,13 @@ function extractTagValue(xml: string, tag: string): string | null {
   return match ? match[1] : null;
 }
 
-/** Fetches events in the given date range from every calendar under `calendarHome`. */
+/** Fetches events in the given date range from every calendar under
+ * `calendarHome`, tagged as belonging to `accountId` (`apple:<accountId>` —
+ * see parseIcsEventsFromMultistatus). */
 export async function fetchAppleEvents(
   creds: AppleCredentials,
   calendarHome: string,
+  accountId: string,
   daysAhead = 60,
 ): Promise<CalendarEvent[]> {
   const start = icsDate(new Date());
@@ -149,7 +155,30 @@ export async function fetchAppleEvents(
     throw new Error(`CalDAV REPORT failed: ${res.status} ${await res.text()}`);
   }
   const xml = await res.text();
-  return parseIcsEventsFromMultistatus(xml);
+  return parseIcsEventsFromMultistatus(xml, accountId);
+}
+
+/** Full sync for one connected account — discovers its calendar home, pulls
+ * events, and swaps them into the app's calendar. Shared by Settings'
+ * "Sync Now"/Connect and the Calendar screen's "Sync All", and records
+ * per-account status in useProviderSyncStatusStore. Returns how many events
+ * were fetched; throws (after recording the error) on failure. */
+export async function syncAppleAccount(accountId: string): Promise<number> {
+  useProviderSyncStatusStore.getState().setStatus('apple', accountId, { state: 'syncing' });
+  try {
+    const creds = await loadAppleCredentials(accountId);
+    if (!creds) throw new Error('That Apple account is no longer connected.');
+    const calendarHome = await discoverCalendarHome(creds);
+    const events = await fetchAppleEvents(creds, calendarHome, accountId);
+    useCalendarStore.getState().replaceSyncedEvents('apple', accountId, events);
+    useProviderSyncStatusStore.getState().setStatus('apple', accountId, { state: 'ok', at: new Date().toISOString() });
+    return events.length;
+  } catch (err: any) {
+    useProviderSyncStatusStore
+      .getState()
+      .setStatus('apple', accountId, { state: 'error', message: String(err?.message ?? err), at: new Date().toISOString() });
+    throw err;
+  }
 }
 
 /** Pushes a locally-created event to iCloud as a new VEVENT. */
@@ -187,21 +216,37 @@ function icsDate(d: Date): string {
   return d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
 }
 
-function parseIcsEventsFromMultistatus(xml: string): CalendarEvent[] {
+// djb2 — a small, dependency-free string hash. Just needs to be stable and
+// well-distributed, not cryptographic.
+function hashString(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+function parseIcsEventsFromMultistatus(xml: string, accountId: string): CalendarEvent[] {
   const blocks = xml.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/g) ?? [];
-  return blocks.map((block, i) => {
+  return blocks.map((block) => {
     const summary = block.match(/SUMMARY:(.*)/)?.[1]?.trim() ?? '(untitled event)';
     const dtstart = block.match(/DTSTART[^:]*:(\d{8}T?\d{0,6})/)?.[1] ?? '';
     const year = dtstart.slice(0, 4);
     const month = dtstart.slice(4, 6);
     const day = dtstart.slice(6, 8);
     const date = year && month && day ? `${year}-${month}-${day}` : todayIso();
+    // Prefer the event's own UID (stable across syncs); fall back to its
+    // start+summary if a block is somehow missing one. Positional ids
+    // (the old `apple_${i}_...` scheme) would collide across two accounts
+    // synced in the same pass, and would also shift every id whenever an
+    // event elsewhere in the feed was added/removed — this doesn't.
+    const uid = block.match(/\bUID:(.*)/)?.[1]?.trim();
+    const idKey = uid ? `uid:${uid}` : `${dtstart}|${summary}`;
     return {
-      id: `apple_${i}_${dtstart}`,
+      id: `apple:${accountId}:${hashString(idKey)}`,
       date,
       title: summary,
       personIds: [],
       source: 'apple' as const,
+      calendarId: `apple:${accountId}` as const,
     };
   });
 }

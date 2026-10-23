@@ -16,29 +16,33 @@ import { Avatar } from '../components/Avatar';
 import { useTheme } from '../theme/ThemeProvider';
 import { PrimaryButton, SegmentedControl, Switch } from '../components/ui';
 import { EditIcon, PlusIcon, TrashIcon } from '../components/icons';
-import { useFamilyStore, useCalendarStore, useSettingsStore, useAppLockStore, useAuthStore } from '../store/useAppStore';
+import {
+  useFamilyStore,
+  useCalendarStore,
+  useSettingsStore,
+  useAppLockStore,
+  useAuthStore,
+  useProviderSyncStatusStore,
+} from '../store/useAppStore';
 import { hashPin, isValidPin, PIN_LENGTH } from '../lib/pin';
 import { personColorOptions } from '../theme/colors';
-import { FamilyMember, PaletteSeed, ThemePreference } from '../store/types';
+import { AppleAccount, FamilyMember, GoogleAccount, PaletteSeed, ThemePreference } from '../store/types';
 import { CUSTOM_SWATCH_OPTIONS, PALETTE_PRESETS, paletteSwatchDots } from '../lib/paletteColors';
 import { confirmAction, notify } from '../lib/alerts';
 import {
   consumeWebRedirectAuthResult,
   exchangeGoogleCode,
-  fetchGoogleCalendarList,
-  fetchGoogleEvents,
-  getFreshGoogleAccessToken,
+  fetchGoogleUserEmail,
   isGoogleConfigured,
   startWebRedirectAuth,
+  syncGoogleAccount,
   useGoogleAuthRequest,
 } from '../lib/googleCalendar';
 import {
   AppleCredentials,
   clearAppleCredentials,
-  discoverCalendarHome,
-  fetchAppleEvents,
-  loadAppleCredentials,
   saveAppleCredentials,
+  syncAppleAccount,
 } from '../lib/appleCalendar';
 import {
   addSubscribedCalendarFromLink,
@@ -474,57 +478,38 @@ function PaletteOptionCard({
 // ---------------------------------------------------------------------------
 function ConnectedCalendarsSection() {
   const theme = useTheme();
-  const google = useSettingsStore((s) => s.google);
-  const setGoogleAuth = useSettingsStore((s) => s.setGoogleAuth);
-  const disconnectGoogle = useSettingsStore((s) => s.disconnectGoogle);
-  const apple = useSettingsStore((s) => s.apple);
-  const setAppleConnection = useSettingsStore((s) => s.setAppleConnection);
-  const setAppleEnabled = useSettingsStore((s) => s.setAppleEnabled);
+  const googleAccounts = useSettingsStore((s) => s.googleAccounts);
+  const addGoogleAccount = useSettingsStore((s) => s.addGoogleAccount);
+  const updateGoogleAccount = useSettingsStore((s) => s.updateGoogleAccount);
+  const removeGoogleAccount = useSettingsStore((s) => s.removeGoogleAccount);
+  const appleAccounts = useSettingsStore((s) => s.appleAccounts);
+  const addAppleAccount = useSettingsStore((s) => s.addAppleAccount);
+  const updateAppleAccount = useSettingsStore((s) => s.updateAppleAccount);
+  const removeAppleAccount = useSettingsStore((s) => s.removeAppleAccount);
   const subscribedCalendars = useSettingsStore((s) => s.subscribedCalendars);
-  const replaceSyncedEvents = useCalendarStore((s) => s.replaceSyncedEvents);
 
   const googleConfigured = useMemo(() => isGoogleConfigured(), []);
   const [request, response, promptAsync] = useGoogleAuthRequest();
-  const [googleBusy, setGoogleBusy] = useState(false);
+  const [googleConnecting, setGoogleConnecting] = useState(false);
 
-  // Refresh the account's calendar list, then pull events from every calendar
-  // in it and swap them into the app's calendar.
-  const runGoogleSync = async (accessToken: string) => {
-    const calendars = await fetchGoogleCalendarList(accessToken);
-    setGoogleAuth({ calendars });
-    const ids = calendars.length ? calendars.map((c) => c.id) : ['primary'];
-    const events = await fetchGoogleEvents(accessToken, ids);
-    replaceSyncedEvents(
-      'google',
-      events,
-      ids.map((id) => `google:${id}`),
-    );
-    return events.length;
-  };
-
-  // "Sync Now" once already connected — no browser round-trip, just refresh
-  // the access token from the stored refresh token if needed.
-  const syncGoogleNow = async () => {
-    setGoogleBusy(true);
-    try {
-      const count = await runGoogleSync(await getFreshGoogleAccessToken());
-      notify('Google Calendar synced', `Synced ${count} upcoming event(s).`);
-    } catch (err: any) {
-      notify('Google Calendar sync failed', String(err?.message ?? err));
-    } finally {
-      setGoogleBusy(false);
+  // Shared tail end of a successful OAuth round-trip, however the tokens
+  // were obtained (native's on-device code exchange, or either of the two
+  // web paths below) — looks up whether this is an already-connected
+  // account reconnecting (matched by email) or a brand new one, then runs
+  // its first sync.
+  const finishGoogleConnect = async (tokens: { accessToken: string; refreshToken?: string; expiresAt: number }) => {
+    const email = await fetchGoogleUserEmail(tokens.accessToken).catch(() => '');
+    const existing = email ? useSettingsStore.getState().googleAccounts.find((a) => a.email === email) : undefined;
+    let accountId: string;
+    if (existing) {
+      updateGoogleAccount(existing.id, { email, enabled: true, ...tokens });
+      accountId = existing.id;
+    } else {
+      accountId = addGoogleAccount({ email, enabled: true, ...tokens }).id;
     }
-  };
-
-  // Shared tail end of connecting, however the access token was obtained
-  // (native's on-device code exchange, or either of the two web paths
-  // below) — records it, flips the UI to "connected", and does the first
-  // events pull.
-  const finishGoogleConnect = async (accessToken: string) => {
-    setGoogleAuth({ connected: true });
     try {
-      const count = await runGoogleSync(accessToken);
-      notify('Google Calendar connected', `Synced ${count} upcoming event(s).`);
+      const count = await syncGoogleAccount(accountId);
+      notify(existing ? 'Google account reconnected' : 'Google account connected', `Synced ${count} upcoming event(s).`);
     } catch (syncErr: any) {
       // eslint-disable-next-line no-console
       console.error('[google] initial events sync failed —', syncErr);
@@ -561,15 +546,14 @@ function ConnectedCalendarsSection() {
     // it's guaranteed to be identical regardless of any redirect in between.
     const redirectUri = result.originalRedirectUri ?? `${window.location.origin}${window.location.pathname}`;
     (async () => {
-      setGoogleBusy(true);
+      setGoogleConnecting(true);
       try {
         const t = await exchangeGoogleCode({ code: result.code, codeVerifier: result.codeVerifier, redirectUri });
-        setGoogleAuth({ refreshToken: t.refreshToken, accessToken: t.accessToken, expiresAt: t.expiresAt });
-        await finishGoogleConnect(t.accessToken);
+        await finishGoogleConnect(t);
       } catch (err: any) {
         notify('Google sign-in failed', `${String(err?.message ?? err)}\n\nredirectUri used: ${redirectUri}`);
       } finally {
-        setGoogleBusy(false);
+        setGoogleConnecting(false);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -594,34 +578,58 @@ function ConnectedCalendarsSection() {
     handledAuthRef.current = authKey;
 
     (async () => {
-      setGoogleBusy(true);
+      setGoogleConnecting(true);
       try {
         const a = response.authentication!;
-        setGoogleAuth({
-          refreshToken: a.refreshToken ?? undefined,
+        await finishGoogleConnect({
           accessToken: a.accessToken,
+          refreshToken: a.refreshToken ?? undefined,
           expiresAt: Date.now() + (a.expiresIn ?? 3600) * 1000,
         });
-        await finishGoogleConnect(a.accessToken);
       } catch (err: any) {
         handledAuthRef.current = null;
         notify('Google sign-in failed', String(err?.message ?? err));
       } finally {
-        setGoogleBusy(false);
+        setGoogleConnecting(false);
       }
     })();
   }, [response]);
 
+  const startGoogleConnect = () => {
+    if (Platform.OS === 'web') {
+      if (!request) {
+        notify('Still loading', 'Give it a moment and try again.');
+        return;
+      }
+      startWebRedirectAuth(request);
+    } else {
+      promptAsync();
+    }
+  };
+
+  const syncOneGoogleAccount = async (account: GoogleAccount) => {
+    try {
+      const count = await syncGoogleAccount(account.id);
+      notify('Google Calendar synced', `Synced ${count} upcoming event(s) for ${account.email}.`);
+    } catch (err: any) {
+      notify('Google Calendar sync failed', String(err?.message ?? err));
+    }
+  };
+
+  const disconnectGoogleAccount = (account: GoogleAccount) =>
+    confirmAction(
+      'Disconnect this Google account?',
+      `Stops syncing new changes for ${account.email || 'this account'}. Events already synced stay until the next full sync or reset.`,
+      'Disconnect',
+      () => removeGoogleAccount(account.id),
+      { destructive: true },
+    );
+
+  // --- Apple / iCloud — see appleCalendar.ts; credentials are kept out of
+  // this (persisted) store, per account, in secure storage.
   const [appleId, setAppleId] = useState('');
   const [applePassword, setApplePassword] = useState('');
   const [appleBusy, setAppleBusy] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      const saved = await loadAppleCredentials();
-      if (saved) setAppleId(saved.appleId);
-    })();
-  }, []);
 
   const connectApple = async () => {
     if (!appleId.trim() || !applePassword.trim()) {
@@ -629,15 +637,16 @@ function ConnectedCalendarsSection() {
       return;
     }
     const creds: AppleCredentials = { appleId: appleId.trim(), appSpecificPassword: applePassword.trim() };
+    const existing = appleAccounts.find((a) => a.appleId === creds.appleId);
     setAppleBusy(true);
     try {
-      await saveAppleCredentials(creds);
-      const home = await discoverCalendarHome(creds);
-      const events = await fetchAppleEvents(creds, home);
-      replaceSyncedEvents('apple', events);
-      setAppleConnection(true, creds.appleId);
+      const accountId = existing ? existing.id : addAppleAccount({ appleId: creds.appleId, enabled: true }).id;
+      if (existing) updateAppleAccount(existing.id, { enabled: true });
+      await saveAppleCredentials(accountId, creds);
+      const count = await syncAppleAccount(accountId);
+      setAppleId('');
       setApplePassword('');
-      notify('Apple Calendar connected', `Synced ${events.length} upcoming event(s).`);
+      notify(existing ? 'Apple account reconnected' : 'Apple account connected', `Synced ${count} upcoming event(s).`);
     } catch (err: any) {
       notify(
         'Apple Calendar sync failed',
@@ -648,11 +657,26 @@ function ConnectedCalendarsSection() {
     }
   };
 
-  const disconnectApple = async () => {
-    await clearAppleCredentials();
-    setAppleConnection(false);
-    setApplePassword('');
+  const syncOneAppleAccount = async (account: AppleAccount) => {
+    try {
+      const count = await syncAppleAccount(account.id);
+      notify('Apple Calendar synced', `Synced ${count} upcoming event(s) for ${account.appleId}.`);
+    } catch (err: any) {
+      notify('Apple Calendar sync failed', String(err?.message ?? err));
+    }
   };
+
+  const disconnectAppleAccount = (account: AppleAccount) =>
+    confirmAction(
+      'Disconnect this Apple ID?',
+      `Stops syncing new changes for ${account.appleId}. Events already synced stay until the next full sync or reset.`,
+      'Disconnect',
+      async () => {
+        await clearAppleCredentials(account.id);
+        removeAppleAccount(account.id);
+      },
+      { destructive: true },
+    );
 
   // --- Public (subscribed) calendars — shares the same helpers the Calendar
   // screen's toolbar uses (add/toggle/remove live in src/lib/icsCalendar).
@@ -696,132 +720,102 @@ function ConnectedCalendarsSection() {
     <View>
       <Text style={[styles.h1, { fontFamily: theme.fonts.head, color: theme.colors.ink }]}>Connected Calendars</Text>
       <Text style={[styles.sub, { fontFamily: theme.fonts.body, color: theme.colors.inkSoft }]}>
-        Two-way sync keeps Huddle's calendar and your family's Google/Apple calendars matching. Public
-        calendars can be followed by link (view only).
+        Two-way sync keeps Huddle's calendar and your family's Google/Apple calendars matching — connect as many
+        accounts as your family uses. Public calendars can be followed by link (view only).
       </Text>
 
-      {/* Google */}
-      <View style={[styles.calendarCard, { backgroundColor: theme.colors.fieldBg }]}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 15, color: theme.colors.ink }}>
-            Google Calendar
+      {/* Google — one row per connected account, then "add another" */}
+      <Text style={[styles.providerLabel, { color: theme.colors.inkSoft }]}>Google</Text>
+      {!googleConfigured ? (
+        <View style={[styles.calendarCard, { backgroundColor: theme.colors.fieldBg }]}>
+          <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft, flex: 1 }}>
+            Needs a Google Cloud OAuth Client ID — see README.md "Google Calendar setup".
           </Text>
-          <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft, marginTop: 2 }}>
-            {!googleConfigured
-              ? 'Needs a Google Cloud OAuth Client ID — see README.md "Google Calendar setup".'
-              : google.connected
-              ? `Connected${google.email ? ` as ${google.email}` : ''}.`
-              : 'Not connected yet.'}
-          </Text>
-        </View>
-        {googleConfigured ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {google.connected && (
-              <>
-                <Switch
-                  value={google.enabled !== false}
-                  onValueChange={(v) => setGoogleAuth({ enabled: v })}
-                />
-                <Pressable onPress={disconnectGoogle} disabled={googleBusy} hitSlop={6}>
-                  <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.danger }}>
-                    Disconnect
-                  </Text>
-                </Pressable>
-              </>
-            )}
-            <PrimaryButton
-              label={googleBusy ? 'Syncing…' : google.connected ? 'Sync Now' : 'Connect'}
-              color={theme.colors.calDk}
-              onPress={() => {
-                if (google.connected) {
-                  syncGoogleNow();
-                } else if (Platform.OS === 'web') {
-                  if (!request) {
-                    notify('Still loading', 'Give it a moment and try again.');
-                    return;
-                  }
-                  startWebRedirectAuth(request);
-                } else {
-                  promptAsync();
-                }
-              }}
-            />
-          </View>
-        ) : (
           <View style={[styles.disabledPill, { backgroundColor: theme.colors.border }]}>
             <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.inkSoft }}>
               Setup required
             </Text>
           </View>
-        )}
-      </View>
-      {google.connected && google.enabled === false && (
-        <Text style={{ fontFamily: theme.fonts.body, fontSize: 11.5, color: theme.colors.inkSoft, marginTop: -6, marginBottom: 8 }}>
-          Google events are hidden and local changes aren't pushed to Google while this is off.
-        </Text>
+        </View>
+      ) : (
+        <>
+          {googleAccounts.map((account) => (
+            <GoogleAccountRow
+              key={account.id}
+              account={account}
+              onToggle={(enabled) => updateGoogleAccount(account.id, { enabled })}
+              onSync={() => syncOneGoogleAccount(account)}
+              onDisconnect={() => disconnectGoogleAccount(account)}
+            />
+          ))}
+          <PrimaryButton
+            label={googleConnecting ? 'Connecting…' : googleAccounts.length ? '+ Add another Google account' : 'Connect Google Calendar'}
+            color={theme.colors.calDk}
+            onPress={startGoogleConnect}
+          />
+        </>
       )}
 
-      {/* Apple */}
-      <View style={[styles.calendarCard, { flexDirection: 'column', alignItems: 'stretch', backgroundColor: theme.colors.fieldBg }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 15, color: theme.colors.ink }}>
-              Apple / iCloud Calendar
-            </Text>
-            <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft, marginTop: 2 }}>
-              {Platform.OS === 'web'
-                ? "Not available in the web version — iCloud's servers block browser requests (CORS). Use the tablet's Expo Go / installed app build instead."
-                : apple.connected
-                ? `Connected as ${apple.appleId}.`
-                : 'Sign in with an app-specific password.'}
-            </Text>
-          </View>
-          {apple.connected && Platform.OS !== 'web' && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Switch value={apple.enabled !== false} onValueChange={setAppleEnabled} />
-              <PrimaryButton label="Disconnect" color={theme.colors.danger} onPress={disconnectApple} />
-            </View>
-          )}
+      {/* Apple / iCloud — same shape as Google above */}
+      <Text style={[styles.providerLabel, { color: theme.colors.inkSoft, marginTop: 18 }]}>Apple / iCloud</Text>
+      {Platform.OS === 'web' ? (
+        <View style={[styles.calendarCard, { backgroundColor: theme.colors.fieldBg }]}>
+          <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft, flex: 1 }}>
+            Not available in the web version — iCloud's servers block browser requests (CORS). Use the tablet's
+            Expo Go / installed app build instead.
+          </Text>
         </View>
-
-        {!apple.connected && Platform.OS !== 'web' && (
-          <View style={{ marginTop: 12, gap: 8 }}>
-            <TextInput
-              value={appleId}
-              onChangeText={setAppleId}
-              placeholder="Apple ID email"
-              autoCapitalize="none"
-              placeholderTextColor={theme.colors.inkSoft}
-              style={[styles.input, { backgroundColor: theme.colors.panel, color: theme.colors.ink }]}
+      ) : (
+        <>
+          {appleAccounts.map((account) => (
+            <AppleAccountRow
+              key={account.id}
+              account={account}
+              onToggle={(enabled) => updateAppleAccount(account.id, { enabled })}
+              onSync={() => syncOneAppleAccount(account)}
+              onDisconnect={() => disconnectAppleAccount(account)}
             />
-            <TextInput
-              value={applePassword}
-              onChangeText={setApplePassword}
-              placeholder="App-specific password"
-              secureTextEntry
-              autoCapitalize="none"
-              placeholderTextColor={theme.colors.inkSoft}
-              style={[styles.input, { backgroundColor: theme.colors.panel, color: theme.colors.ink }]}
-            />
-            <Text style={{ fontFamily: theme.fonts.body, fontSize: 11.5, color: theme.colors.inkSoft }}>
-              Generate one at appleid.apple.com → Sign-In and Security → App-Specific Passwords. Never use your
-              real Apple ID password here.
+          ))}
+          <View style={[styles.calendarCard, { flexDirection: 'column', alignItems: 'stretch', backgroundColor: theme.colors.fieldBg }]}>
+            <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 14, color: theme.colors.ink, marginBottom: 8 }}>
+              {appleAccounts.length ? '+ Add another Apple ID' : 'Connect an Apple ID'}
             </Text>
-            <PrimaryButton
-              label={appleBusy ? 'Connecting…' : 'Connect'}
-              color={theme.colors.ink}
-              onPress={connectApple}
-            />
+            <View style={{ gap: 8 }}>
+              <TextInput
+                value={appleId}
+                onChangeText={setAppleId}
+                placeholder="Apple ID email"
+                autoCapitalize="none"
+                placeholderTextColor={theme.colors.inkSoft}
+                style={[styles.input, { backgroundColor: theme.colors.panel, color: theme.colors.ink }]}
+              />
+              <TextInput
+                value={applePassword}
+                onChangeText={setApplePassword}
+                placeholder="App-specific password"
+                secureTextEntry
+                autoCapitalize="none"
+                placeholderTextColor={theme.colors.inkSoft}
+                style={[styles.input, { backgroundColor: theme.colors.panel, color: theme.colors.ink }]}
+              />
+              <Text style={{ fontFamily: theme.fonts.body, fontSize: 11.5, color: theme.colors.inkSoft }}>
+                Generate one at appleid.apple.com → Sign-In and Security → App-Specific Passwords. Never use your
+                real Apple ID password here.
+              </Text>
+              <PrimaryButton
+                label={appleBusy ? 'Connecting…' : 'Connect'}
+                color={theme.colors.ink}
+                onPress={connectApple}
+              />
+            </View>
           </View>
-        )}
-      </View>
+        </>
+      )}
 
       {/* Public calendars (view only) */}
+      <Text style={[styles.providerLabel, { color: theme.colors.inkSoft, marginTop: 18 }]}>Public calendars</Text>
       <View style={[styles.calendarCard, { flexDirection: 'column', alignItems: 'stretch', backgroundColor: theme.colors.fieldBg }]}>
-        <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 15, color: theme.colors.ink }}>
-          Public calendars
-        </Text>
-        <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft, marginTop: 2 }}>
+        <Text style={{ fontFamily: theme.fonts.body, fontSize: 12.5, color: theme.colors.inkSoft }}>
           Follow any calendar by its ICS or webcal link (e.g. a school, sports team, or a Google
           calendar's "public address in iCal format"). View only — these events can't be edited here.
         </Text>
@@ -878,6 +872,93 @@ function ConnectedCalendarsSection() {
       </View>
     </View>
   );
+}
+
+/** One connected Google account's row — email, enabled switch, Sync Now
+ * (tracking useProviderSyncStatusStore for a spinner/last-synced/error
+ * label), Disconnect. Mirrors AppleAccountRow below. */
+function GoogleAccountRow({
+  account,
+  onToggle,
+  onSync,
+  onDisconnect,
+}: {
+  account: GoogleAccount;
+  onToggle: (enabled: boolean) => void;
+  onSync: () => void;
+  onDisconnect: () => void;
+}) {
+  const theme = useTheme();
+  const status = useProviderSyncStatusStore((s) => s.google[account.id]);
+  const syncing = status?.state === 'syncing';
+  return (
+    <View style={[styles.calendarCard, { backgroundColor: theme.colors.fieldBg }]}>
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 15, color: theme.colors.ink }}>
+          {account.email || 'Google account'}
+        </Text>
+        <Text style={{ fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.inkSoft, marginTop: 2 }}>
+          {syncStatusLabel(status)}
+        </Text>
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Switch value={account.enabled} onValueChange={onToggle} />
+        <Pressable onPress={onDisconnect} disabled={syncing} hitSlop={6}>
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.danger }}>
+            Disconnect
+          </Text>
+        </Pressable>
+        <PrimaryButton label={syncing ? 'Syncing…' : 'Sync Now'} color={theme.colors.calDk} onPress={onSync} />
+      </View>
+    </View>
+  );
+}
+
+/** One connected Apple account's row — same shape as GoogleAccountRow. */
+function AppleAccountRow({
+  account,
+  onToggle,
+  onSync,
+  onDisconnect,
+}: {
+  account: AppleAccount;
+  onToggle: (enabled: boolean) => void;
+  onSync: () => void;
+  onDisconnect: () => void;
+}) {
+  const theme = useTheme();
+  const status = useProviderSyncStatusStore((s) => s.apple[account.id]);
+  const syncing = status?.state === 'syncing';
+  return (
+    <View style={[styles.calendarCard, { backgroundColor: theme.colors.fieldBg }]}>
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 15, color: theme.colors.ink }}>
+          {account.appleId}
+        </Text>
+        <Text style={{ fontFamily: theme.fonts.body, fontSize: 12, color: theme.colors.inkSoft, marginTop: 2 }}>
+          {syncStatusLabel(status)}
+        </Text>
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Switch value={account.enabled} onValueChange={onToggle} />
+        <Pressable onPress={onDisconnect} disabled={syncing} hitSlop={6}>
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 12, color: theme.colors.danger }}>
+            Disconnect
+          </Text>
+        </Pressable>
+        <PrimaryButton label={syncing ? 'Syncing…' : 'Sync Now'} color={theme.colors.ink} onPress={onSync} />
+      </View>
+    </View>
+  );
+}
+
+/** Shared "Connected." / "Synced 2m ago." / "Sync failed — tap Sync Now to
+ * retry." line for both account row types, from useProviderSyncStatusStore. */
+function syncStatusLabel(status: { state: 'idle' | 'syncing' | 'ok' | 'error'; message?: string; at?: string } | undefined): string {
+  if (!status || status.state === 'idle') return 'Connected.';
+  if (status.state === 'syncing') return 'Syncing…';
+  if (status.state === 'error') return `Sync failed — ${status.message ?? 'tap Sync Now to retry.'}`;
+  return 'Synced just now.';
 }
 
 // ---------------------------------------------------------------------------
@@ -1482,6 +1563,7 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
   },
+  providerLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
   disabledPill: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999 },
   notifRow: {
     flexDirection: 'row',

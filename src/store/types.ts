@@ -99,18 +99,19 @@ export type MealSuggestion = {
 export type CalendarEventSource = 'local' | 'google' | 'apple' | 'subscription';
 
 /** Identifier for the calendar an event lives on:
- *   'local'                — app-only
- *   'google:<gcal id>'     — a specific calendar within the connected Google
- *                            account ('google:primary', 'google:abc@group…').
- *                            The bare legacy value 'google' is treated as
- *                            'google:primary'.
- *   'apple'                — the connected iCloud calendar
- *   'sub:<id>'             — a subscribed public calendar (SubscribedCalendar)
+ *   'local'                        — app-only
+ *   'google:<accountId>:<gcal id>' — a specific calendar within one of
+ *                                    possibly several connected Google
+ *                                    accounts (see GoogleAccount).
+ *   'apple:<accountId>'            — one connected iCloud account (flat —
+ *                                    no sub-calendar concept on this side).
+ *   'sub:<id>'                     — a subscribed public calendar
+ *                                    (SubscribedCalendar)
  * Chosen per-event in the add/edit form; drives which calendar a change is
  * pushed to. */
-export type CalendarId = 'local' | 'google' | 'apple' | `google:${string}` | `sub:${string}`;
+export type CalendarId = 'local' | `google:${string}:${string}` | `apple:${string}` | `sub:${string}`;
 
-/** One calendar in the connected Google account (from calendarList). */
+/** One calendar in a connected Google account (from calendarList). */
 export type GoogleCalendarSummary = {
   id: string;
   summary: string;
@@ -119,6 +120,36 @@ export type GoogleCalendarSummary = {
   writable: boolean;
   /** Google's own display color for this calendar (hex), if it returned one. */
   color?: string;
+};
+
+/** One connected Google account — there can be several (e.g. Mom's + Dad's)
+ * at once, each syncing independently. Mirrors SubscribedCalendar's
+ * array-of-records shape: a stable `id`, plain data, no separate
+ * "connected" flag (being in the array is what "connected" means). */
+export type GoogleAccount = {
+  id: string;
+  /** The Google account's email — fetched right after connecting (see
+   * fetchGoogleUserEmail in googleCalendar.ts) so multiple accounts can be
+   * told apart in the UI. */
+  email: string;
+  /** When false, this account's events are hidden and no local change is
+   * pushed to it. */
+  enabled: boolean;
+  refreshToken?: string;
+  accessToken?: string;
+  expiresAt?: number;
+  /** This account's calendars (from calendarList), refreshed on connect /
+   * Sync Now. Drives the "which Google calendar" picker in the event form. */
+  calendars?: GoogleCalendarSummary[];
+};
+
+/** One connected Apple/iCloud account. The app-specific password itself is
+ * kept out of this (persisted) record — see roost.appleCalendarCredentials.*
+ * in appleCalendar.ts — same split `google`/`apple` already had. */
+export type AppleAccount = {
+  id: string;
+  appleId: string;
+  enabled: boolean;
 };
 
 export type CalendarEvent = {

@@ -5,7 +5,7 @@ import { RootStackParamList } from '../navigation/types';
 import { TopBar } from '../components/TopBar';
 import { useTheme } from '../theme/ThemeProvider';
 import { useCalendarStore, useFamilyStore, useSettingsStore, useSyncStatusStore } from '../store/useAppStore';
-import { CalendarEvent, CalendarId, FamilyMember, GoogleCalendarSummary } from '../store/types';
+import { CalendarEvent, CalendarId, FamilyMember, GoogleAccount } from '../store/types';
 import { personColorOptions } from '../theme/colors';
 import {
   deleteEventFromGoogle,
@@ -13,13 +13,16 @@ import {
   mirrorNewEventToGoogle,
   moveEventBetweenGoogleCalendars,
   pushEventEditToGoogle,
+  syncGoogleAccount,
 } from '../lib/googleCalendar';
+import { syncAppleAccount } from '../lib/appleCalendar';
 import { isEventCalendarEnabled } from '../lib/calendarVisibility';
 import { contrastText } from '../lib/contrastColor';
 import { eventCalendarColor } from '../lib/calendarColors';
 import {
   addSubscribedCalendarFromLink,
   refreshEnabledSubscribedCalendars,
+  refreshSubscribedCalendar,
   removeSubscribedCalendarWithEvents,
   toggleSubscribedCalendarWithRefresh,
 } from '../lib/icsCalendar';
@@ -35,7 +38,7 @@ import {
   toIso,
   todayIso,
 } from '../lib/date';
-import { CalendarIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from '../components/icons';
+import { CalendarIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, RefreshIcon } from '../components/icons';
 import { PrimaryButton, SegmentedControl } from '../components/ui';
 import { confirmAction, notify } from '../lib/alerts';
 import { NARROW_BREAKPOINT, useColumnWidth } from '../lib/layout';
@@ -176,8 +179,8 @@ export function CalendarScreen() {
   const family = useFamilyStore((s) => s.members);
   const hidden = useSettingsStore((s) => s.hiddenPersonIds);
   const toggleVisibility = useSettingsStore((s) => s.togglePersonVisibility);
-  const google = useSettingsStore((s) => s.google);
-  const apple = useSettingsStore((s) => s.apple);
+  const googleAccounts = useSettingsStore((s) => s.googleAccounts);
+  const appleAccounts = useSettingsStore((s) => s.appleAccounts);
   const subscribedCalendars = useSettingsStore((s) => s.subscribedCalendars);
   const hiddenGoogleCalendarIds = useSettingsStore((s) => s.hiddenGoogleCalendarIds);
   const toggleGoogleCalendarVisibility = useSettingsStore((s) => s.toggleGoogleCalendarVisibility);
@@ -186,33 +189,70 @@ export function CalendarScreen() {
   const resetGoogleCalendarColor = useSettingsStore((s) => s.resetGoogleCalendarColor);
   const [colorPickerFor, setColorPickerFor] = useState<{ id: string; name: string } | null>(null);
   const [calendarsMenuOpen, setCalendarsMenuOpen] = useState(false);
+  const [syncAllBusy, setSyncAllBusy] = useState(false);
 
   // Refresh the followed public calendars whenever this screen opens.
   React.useEffect(() => {
     refreshEnabledSubscribedCalendars();
   }, []);
 
-  // The calendars a *new or edited* event can be filed under — "This app only"
-  // plus each *writable* calendar in the connected Google account (Work,
-  // Personal, School, …) and iCloud if connected.
+  // Re-syncs every connected, enabled source in one tap — each isolated via
+  // Promise.allSettled so one disconnected/failing account can't block the
+  // rest. Always rendered (not hidden when nothing's connected yet) so the
+  // feature stays discoverable; just disabled with explanatory copy then.
+  const syncAll = async () => {
+    const jobs: { label: string; run: () => Promise<number> }[] = [
+      ...googleAccounts.filter((a) => a.enabled).map((a) => ({ label: a.email || 'Google account', run: () => syncGoogleAccount(a.id) })),
+      ...appleAccounts.filter((a) => a.enabled).map((a) => ({ label: a.appleId, run: () => syncAppleAccount(a.id) })),
+      ...subscribedCalendars.filter((c) => c.enabled).map((c) => ({ label: c.name, run: () => refreshSubscribedCalendar(c.id) })),
+    ];
+    if (!jobs.length) {
+      notify('Nothing to sync', 'Connect a Google or Apple account, or follow a public calendar, from Settings.');
+      return;
+    }
+    setSyncAllBusy(true);
+    try {
+      const results = await Promise.allSettled(jobs.map((j) => j.run()));
+      const failed = jobs.filter((_, i) => results[i].status === 'rejected');
+      const okCount = jobs.length - failed.length;
+      notify(
+        failed.length ? `Synced ${okCount}, ${failed.length} failed` : `Synced all ${okCount}`,
+        failed.map((j) => `${j.label} needs attention`).join('\n') || undefined,
+      );
+    } finally {
+      setSyncAllBusy(false);
+    }
+  };
+  const nothingToSync = !googleAccounts.some((a) => a.enabled) && !appleAccounts.some((a) => a.enabled) && !subscribedCalendars.some((c) => c.enabled);
+
+  // The calendars a *new or edited* event can be filed under — "This app
+  // only" plus each *writable* calendar across every enabled Google account
+  // (Work, Personal, School, … — labeled with the account's email once more
+  // than one is connected, so they stay distinguishable) and one entry per
+  // enabled Apple account.
   const targetCalendars = useMemo<{ id: CalendarId; label: string }[]>(() => {
     const list: { id: CalendarId; label: string }[] = [{ id: 'local', label: 'This app only' }];
-    if (google.connected && google.enabled !== false) {
-      const writable = (google.calendars ?? []).filter((c) => c.writable);
+    const enabledGoogle = googleAccounts.filter((a) => a.enabled);
+    const disambiguateGoogle = enabledGoogle.length > 1;
+    for (const account of enabledGoogle) {
+      const suffix = disambiguateGoogle ? ` (${account.email})` : '';
+      const writable = (account.calendars ?? []).filter((c) => c.writable);
       if (writable.length) {
         writable
           .slice()
-          .sort((a, b) =>
-            a.primary === b.primary ? a.summary.localeCompare(b.summary) : a.primary ? -1 : 1,
-          )
-          .forEach((c) => list.push({ id: `google:${c.id}`, label: c.summary }));
+          .sort((a, b) => (a.primary === b.primary ? a.summary.localeCompare(b.summary) : a.primary ? -1 : 1))
+          .forEach((c) => list.push({ id: `google:${account.id}:${c.id}`, label: `${c.summary}${suffix}` }));
       } else {
-        list.push({ id: 'google:primary', label: 'Google Calendar' });
+        list.push({ id: `google:${account.id}:primary`, label: `Google Calendar${suffix}` });
       }
     }
-    if (apple.connected && apple.enabled !== false) list.push({ id: 'apple', label: 'iCloud Calendar' });
+    const enabledApple = appleAccounts.filter((a) => a.enabled);
+    const disambiguateApple = enabledApple.length > 1;
+    for (const account of enabledApple) {
+      list.push({ id: `apple:${account.id}`, label: disambiguateApple ? `iCloud (${account.appleId})` : 'iCloud Calendar' });
+    }
     return list;
-  }, [google.connected, google.enabled, google.calendars, apple.connected, apple.enabled]);
+  }, [googleAccounts, appleAccounts]);
 
   // Human-readable name for whichever calendar an event sits on (for the
   // read-only view of a subscribed-calendar event, and the chips).
@@ -221,12 +261,18 @@ export function CalendarScreen() {
       const sub = subscribedCalendars.find((c) => `sub:${c.id}` === e.calendarId);
       return sub ? sub.name : 'Public calendar';
     }
-    const gcal = googleCalIdFor(e.calendarId);
-    if (gcal || e.source === 'google') {
-      const found = (google.calendars ?? []).find((c) => c.id === (gcal ?? 'primary'));
-      return found ? found.summary : 'Google Calendar';
+    if (e.source === 'google') {
+      const parsed = googleCalIdFor(e.calendarId);
+      const account = parsed ? googleAccounts.find((a) => a.id === parsed.accountId) : undefined;
+      const cal = account?.calendars?.find((c) => c.id === parsed?.calId);
+      const base = cal ? cal.summary : 'Google Calendar';
+      return account && googleAccounts.length > 1 ? `${base} (${account.email})` : base;
     }
-    if (e.source === 'apple' || e.calendarId === 'apple') return 'iCloud Calendar';
+    if (e.source === 'apple') {
+      const accountId = e.calendarId?.startsWith('apple:') ? e.calendarId.slice('apple:'.length) : null;
+      const account = accountId ? appleAccounts.find((a) => a.id === accountId) : undefined;
+      return account && appleAccounts.length > 1 ? `iCloud (${account.appleId})` : 'iCloud Calendar';
+    }
     return 'This app only';
   };
 
@@ -244,7 +290,7 @@ export function CalendarScreen() {
   const contentWidthGuess = windowWidth - (windowWidth >= NARROW_BREAKPOINT ? SIDEBAR_WIDTH : 0) - 24 * 2 - 14 * 2;
   const weekRowHeight = dayColWidth ?? Math.floor(contentWidthGuess / 7);
 
-  const calToggles = { google, apple, subscribedCalendars, hiddenGoogleCalendarIds };
+  const calToggles = { googleAccounts, appleAccounts, subscribedCalendars, hiddenGoogleCalendarIds };
   const visibleEvents = events.filter(
     (e) =>
       isEventCalendarEnabled(e, calToggles) &&
@@ -435,7 +481,7 @@ export function CalendarScreen() {
         </Text>
         {dayEvents.slice(0, maxShown).map((e) => {
           const people = family.filter((m) => e.personIds.includes(m.id));
-          const chipColor = people[0]?.color ?? eventCalendarColor(e, google.calendars, googleCalendarColors) ?? theme.colors.inkSoft;
+          const chipColor = people[0]?.color ?? eventCalendarColor(e, googleAccounts, googleCalendarColors) ?? theme.colors.inkSoft;
           return (
             <Pressable
               key={e.id}
@@ -586,45 +632,58 @@ export function CalendarScreen() {
                     );
                   })}
 
-                  {google.connected && google.enabled !== false && (
-                    <>
-                      <Text style={[styles.calendarsMenuLabel, { color: theme.colors.inkSoft }]}>Google Calendar</Text>
-                      {(google.calendars ?? []).map((c, i) => {
-                        const on = !hiddenGoogleCalendarIds.includes(c.id);
-                        // Same formula eventCalendarColor uses, so this
-                        // swatch always matches the color its own events
-                        // are drawn in.
-                        const color = googleCalendarColors[c.id] || c.color || personColorOptions[i % personColorOptions.length];
-                        return (
-                          <Pressable key={c.id} onPress={() => toggleGoogleCalendarVisibility(c.id)} style={styles.calendarsRow}>
-                            {/* Its own tap target (nested Pressables resolve
-                                to whichever one was actually touched, same
-                                pattern as the event chips elsewhere) — tap
-                                the swatch to customize the color, tap the
-                                rest of the row to show/hide it. Google
-                                calendars (unlike family members) have no
-                                Settings-assigned color of their own, so they
-                                keep this picker. */}
-                            <Pressable onPress={() => setColorPickerFor({ id: c.id, name: c.summary })} hitSlop={6}>
-                              <View style={[styles.legendBox, on && { backgroundColor: color, borderColor: 'transparent' }]}>
-                                {on && <CheckIcon size={10} color="#fff" />}
-                              </View>
+                  {googleAccounts.filter((a) => a.enabled).map((account, accountIdx) => {
+                    // Palette fallback index continues across every
+                    // account's calendars (matching eventCalendarColor's own
+                    // flattened indexing), not restarted per account.
+                    const priorCount = googleAccounts
+                      .filter((a) => a.enabled)
+                      .slice(0, accountIdx)
+                      .reduce((sum, a) => sum + (a.calendars ?? []).length, 0);
+                    return (
+                      <React.Fragment key={account.id}>
+                        <Text style={[styles.calendarsMenuLabel, { color: theme.colors.inkSoft }]}>
+                          {googleAccounts.length > 1 ? `Google — ${account.email}` : 'Google Calendar'}
+                        </Text>
+                        {(account.calendars ?? []).map((c, i) => {
+                          const compositeKey = `${account.id}:${c.id}`;
+                          const on = !hiddenGoogleCalendarIds.includes(compositeKey);
+                          // Same formula eventCalendarColor uses, so this
+                          // swatch always matches the color its own events
+                          // are drawn in.
+                          const color =
+                            googleCalendarColors[compositeKey] || c.color || personColorOptions[(priorCount + i) % personColorOptions.length];
+                          return (
+                            <Pressable key={c.id} onPress={() => toggleGoogleCalendarVisibility(compositeKey)} style={styles.calendarsRow}>
+                              {/* Its own tap target (nested Pressables resolve
+                                  to whichever one was actually touched, same
+                                  pattern as the event chips elsewhere) — tap
+                                  the swatch to customize the color, tap the
+                                  rest of the row to show/hide it. Google
+                                  calendars (unlike family members) have no
+                                  Settings-assigned color of their own, so they
+                                  keep this picker. */}
+                              <Pressable onPress={() => setColorPickerFor({ id: compositeKey, name: c.summary })} hitSlop={6}>
+                                <View style={[styles.legendBox, on && { backgroundColor: color, borderColor: 'transparent' }]}>
+                                  {on && <CheckIcon size={10} color="#fff" />}
+                                </View>
+                              </Pressable>
+                              <Text
+                                style={{
+                                  fontFamily: theme.fonts.headSemiBold,
+                                  fontSize: 13,
+                                  color: theme.colors.ink,
+                                  textDecorationLine: on ? 'none' : 'line-through',
+                                }}
+                              >
+                                {c.summary}
+                              </Text>
                             </Pressable>
-                            <Text
-                              style={{
-                                fontFamily: theme.fonts.headSemiBold,
-                                fontSize: 13,
-                                color: theme.colors.ink,
-                                textDecorationLine: on ? 'none' : 'line-through',
-                              }}
-                            >
-                              {c.summary}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </>
-                  )}
+                          );
+                        })}
+                      </React.Fragment>
+                    );
+                  })}
 
                   <Text style={[styles.calendarsMenuLabel, { color: theme.colors.inkSoft }]}>Other calendars</Text>
                   {subscribedCalendars.map((c) => (
@@ -668,6 +727,17 @@ export function CalendarScreen() {
         </View>
 
         <Pressable
+          onPress={syncAll}
+          disabled={syncAllBusy || nothingToSync}
+          style={[styles.calendarsBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.panel, opacity: nothingToSync ? 0.5 : 1 }]}
+        >
+          <RefreshIcon size={14} color={theme.colors.inkSoft} />
+          <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 13, color: theme.colors.inkSoft }}>
+            {syncAllBusy ? 'Syncing…' : nothingToSync ? 'Sync All — nothing connected yet' : 'Sync All'}
+          </Text>
+        </Pressable>
+
+        <Pressable
           onPress={() =>
             confirmAction(
               'Reset the calendar?',
@@ -698,7 +768,7 @@ export function CalendarScreen() {
           date={toIso(cursor)}
           events={visibleEvents.filter((e) => e.date === toIso(cursor))}
           family={family}
-          googleCalendars={google.calendars}
+          googleAccounts={googleAccounts}
           googleCalendarColors={googleCalendarColors}
           onSelectEvent={(e) => setEditing(e)}
           onAddAt={(time) => {
@@ -913,7 +983,7 @@ function DayAgenda({
   date,
   events,
   family,
-  googleCalendars,
+  googleAccounts,
   googleCalendarColors,
   onSelectEvent,
   onAddAt,
@@ -921,7 +991,7 @@ function DayAgenda({
   date: string;
   events: CalendarEvent[];
   family: FamilyMember[];
-  googleCalendars: GoogleCalendarSummary[] | undefined;
+  googleAccounts: GoogleAccount[] | undefined;
   googleCalendarColors: Record<string, string>;
   onSelectEvent: (e: CalendarEvent) => void;
   onAddAt: (time: string) => void;
@@ -956,7 +1026,7 @@ function DayAgenda({
               const people = family.filter((m) => e.personIds.includes(m.id));
               const color =
                 people[0]?.color ??
-                eventCalendarColor(e, googleCalendars, googleCalendarColors) ??
+                eventCalendarColor(e, googleAccounts, googleCalendarColors) ??
                 theme.colors.inkSoft;
               return (
                 <Pressable
@@ -971,7 +1041,7 @@ function DayAgenda({
                       style={{
                         fontSize: 11.5,
                         fontFamily: theme.fonts.bodyBold,
-                        color: people[0]?.color ?? eventCalendarColor(e, googleCalendars, googleCalendarColors) ?? theme.colors.ink,
+                        color: people[0]?.color ?? eventCalendarColor(e, googleAccounts, googleCalendarColors) ?? theme.colors.ink,
                       }}
                     >
                       {e.title}
@@ -1015,7 +1085,7 @@ function DayAgenda({
             const people = family.filter((m) => e.personIds.includes(m.id));
             const color =
               people[0]?.color ??
-              eventCalendarColor(e, googleCalendars, googleCalendarColors) ??
+              eventCalendarColor(e, googleAccounts, googleCalendarColors) ??
               theme.colors.cal;
             return (
               <Pressable

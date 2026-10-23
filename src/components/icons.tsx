@@ -234,6 +234,15 @@ export function DevicesIcon({ size, color = '#000' }: IconProps) {
   );
 }
 
+export function RefreshIcon({ size, color = '#000' }: IconProps) {
+  return (
+    <Svg {...base(size, color)}>
+      <Path d="M20 11A8 8 0 0 0 5.5 7.5M4 13a8 8 0 0 0 14.5 3.5" />
+      <Path d="M4 4v5h5M20 20v-5h-5" />
+    </Svg>
+  );
+}
+
 export function MessageIcon({ size, color = '#000' }: IconProps) {
   return (
     <Svg {...base(size, color)}>

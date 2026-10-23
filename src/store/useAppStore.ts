@@ -18,11 +18,13 @@ import {
 import { seedRecipes } from '../data/recipes';
 import {
   AmbientSettings,
+  AppleAccount,
   BoardColumn,
   BoardItem,
   CalendarEvent,
   Chore,
   FamilyMember,
+  GoogleAccount,
   GoogleCalendarSummary,
   Meal,
   MealSuggestion,
@@ -92,6 +94,31 @@ export const useSyncStatusStore = create<SyncStatusState>()((set) => ({
   recordFetch: (table, ok, rows) =>
     set((s) => ({ tables: { ...s.tables, [table]: { ok, rows, at: new Date().toISOString() } } })),
   recordError: (table, action, message) => set({ lastError: { table, action, message, at: new Date().toISOString() } }),
+}));
+
+// ---------------------------------------------------------------------------
+// Per-account calendar sync status — NOT persisted. Same philosophy as
+// useSyncStatusStore above, but for Google/Apple/subscribed-calendar sync
+// (which hit those providers' own servers, not Supabase). Lets Settings'
+// account rows and the Calendar screen's "Sync All" button both show a
+// spinner / "Synced 2m ago" / error without each call site tracking its own
+// local state.
+// ---------------------------------------------------------------------------
+export type ProviderSyncStatus = { state: 'idle' | 'syncing' | 'ok' | 'error'; message?: string; at?: string };
+type ProviderKind = 'google' | 'apple' | 'subscribed';
+
+type ProviderSyncStatusState = {
+  google: Record<string, ProviderSyncStatus>;
+  apple: Record<string, ProviderSyncStatus>;
+  subscribed: Record<string, ProviderSyncStatus>;
+  setStatus: (kind: ProviderKind, id: string, status: ProviderSyncStatus) => void;
+};
+
+export const useProviderSyncStatusStore = create<ProviderSyncStatusState>()((set) => ({
+  google: {},
+  apple: {},
+  subscribed: {},
+  setStatus: (kind, id, status) => set((s) => ({ [kind]: { ...s[kind], [id]: status } }) as any),
 }));
 
 function logSyncError(action: string, table: string, error: unknown) {
@@ -777,11 +804,16 @@ type CalendarState = {
   removeEvent: (id: string) => void;
   replaceSyncedEvents: (
     source: 'google' | 'apple',
+    /** Which connected account this batch came from — scopes the
+     * replace to that one account's events, so syncing one Google/Apple
+     * account never touches another connected account's events. */
+    accountId: string,
     events: Omit<CalendarEvent, 'source'>[],
-    /** For Google: the `google:<id>` keys that were actually fetched this
-     * round. Existing Google events on *other* calendars are left alone (so a
-     * partial sync can't wipe events on calendars it didn't read). */
-    googleCalendarKeys?: string[],
+    /** For Google: the raw (unprefixed) calendarList ids that were actually
+     * fetched this round. This account's events on *other* calendars are
+     * left alone (so a partial sync can't wipe events on calendars it
+     * didn't read). */
+    calendarKeys?: string[],
   ) => void;
   /** Replace every event belonging to one subscribed public calendar with a
    * freshly-fetched batch (called after re-reading its ICS feed). */
@@ -836,26 +868,33 @@ export const useCalendarStore = create<CalendarState>()((set, get) => ({
     set((s) => ({ events: s.events.filter((e) => e.id !== id) }));
     syncDelete('calendar_events', id);
   },
-  // Swaps out all previously-synced events from one source with a fresh batch —
-  // called after a Google/Apple sync round-trip. For Google, incoming events
-  // are matched to any existing copy by `googleId` so app-only data on them
-  // (which family members an event involves, its target calendar) survives the
-  // round-trip that Google itself doesn't store.
-  replaceSyncedEvents: (source, events, googleCalendarKeys) => {
+  // Swaps out all previously-synced events from one connected account with a
+  // fresh batch — called after that account's Google/Apple sync round-trip.
+  // For Google, incoming events are matched to any existing copy by
+  // `googleId` so app-only data on them (which family members an event
+  // involves, its target calendar) survives the round-trip that Google
+  // itself doesn't store. For Apple (which has no stable server-side id to
+  // match on) the events' own `id` is now content-derived and stable across
+  // syncs (see appleCalendar.ts), so the same merge-by-id approach applies.
+  replaceSyncedEvents: (source, accountId, events, calendarKeys) => {
     let finalEvents: CalendarEvent[];
-    // Google events on calendars we didn't fetch this round are carried over
-    // untouched (both in local state and left alone in Supabase).
+    // This account's events on calendars we didn't fetch this round are
+    // carried over untouched (both in local state and left alone in
+    // Supabase) — only meaningful for Google, which has sub-calendars.
     let carriedOver: CalendarEvent[] = [];
-    const scope = source === 'google' && googleCalendarKeys ? new Set(googleCalendarKeys) : null;
+    const accountPrefix = source === 'google' ? `google:${accountId}:` : (`apple:${accountId}` as const);
+    const belongsToAccount = (e: CalendarEvent) =>
+      e.source === source && (source === 'google' ? !!e.calendarId?.startsWith(accountPrefix) : e.calendarId === accountPrefix);
+    const scope = source === 'google' && calendarKeys ? new Set(calendarKeys) : null;
     const inScope = (e: CalendarEvent) => {
-      if (e.source !== source) return false;
+      if (!belongsToAccount(e)) return false;
       if (!scope) return true;
-      const key = e.calendarId === 'google' ? 'google:primary' : e.calendarId ?? 'google:primary';
-      return scope.has(key);
+      const rawCalId = e.calendarId?.slice(accountPrefix.length) || 'primary';
+      return scope.has(rawCalId);
     };
 
     if (source === 'google') {
-      carriedOver = get().events.filter((e) => e.source === 'google' && !inScope(e));
+      carriedOver = get().events.filter((e) => belongsToAccount(e) && !inScope(e));
       const prevByGid = new Map(
         get().events.filter((e) => e.googleId).map((e) => [e.googleId as string, e]),
       );
@@ -869,23 +908,29 @@ export const useCalendarStore = create<CalendarState>()((set, get) => ({
           title: ev.title,
           personIds: prev?.personIds ?? [],
           source: 'google',
-          calendarId: ev.calendarId ?? prev?.calendarId ?? 'google:primary',
+          calendarId: ev.calendarId ?? prev?.calendarId ?? `${accountPrefix}primary`,
           googleId: ev.googleId,
         } as CalendarEvent;
       });
     } else {
-      finalEvents = events.map((e) => ({ ...e, source }) as CalendarEvent);
+      const prevById = new Map(get().events.filter((e) => belongsToAccount(e)).map((e) => [e.id, e]));
+      finalEvents = events.map((ev) => {
+        const prev = prevById.get(ev.id);
+        return { ...ev, source, personIds: prev?.personIds ?? ev.personIds ?? [] } as CalendarEvent;
+      });
     }
 
     set((s) => ({
-      events: [...s.events.filter((e) => e.source !== source), ...carriedOver, ...finalEvents],
+      events: [...s.events.filter((e) => !belongsToAccount(e)), ...carriedOver, ...finalEvents],
     }));
     if (isSupabaseConfigured) {
       (async () => {
-        const { error: delErr } = await supabase.from('calendar_events').delete().eq('source', source);
+        const del = supabase.from('calendar_events').delete().eq('source', source);
+        const { error: delErr } =
+          source === 'google' ? await del.like('calendar_id', `${accountPrefix}%`) : await del.eq('calendar_id', accountPrefix);
         if (delErr) logSyncError('delete (pre-sync)', 'calendar_events', delErr);
-        // Re-write the fetched batch plus any Google events on calendars this
-        // round didn't touch, so a partial sync doesn't drop them from the DB.
+        // Re-write the fetched batch plus any events on calendars this round
+        // didn't touch, so a partial sync doesn't drop them from the DB.
         const rows = [...carriedOver, ...finalEvents];
         if (rows.length) {
           const { error: insErr } = await supabase
@@ -1239,6 +1284,48 @@ export const useAppLockStore = create<AppLockState>()(
   ),
 );
 
+// One-time fixup for whatever `pendingCalendarIdBackfill` the v1
+// persisted-settings migration queued (see useSettingsStore's `migrate`
+// above) — rewrites existing calendar_events rows from the old
+// single-account `calendarId` scheme to the new `google:<accountId>:<calId>`
+// / `apple:<accountId>` one, now that both the settings and calendar stores
+// have actually loaded. A no-op (returns immediately) on every install that
+// didn't have a legacy single Google/Apple connection to carry over.
+async function runCalendarIdBackfillIfPending(): Promise<void> {
+  if (!useSettingsStore.persist.hasHydrated()) {
+    await new Promise<void>((resolve) => {
+      const unsub = useSettingsStore.persist.onFinishHydration(() => {
+        unsub();
+        resolve();
+      });
+    });
+  }
+  const pending = useSettingsStore.getState().pendingCalendarIdBackfill;
+  if (!pending.length) return;
+  const { events, updateEvent } = useCalendarStore.getState();
+  for (const job of pending) {
+    for (const e of events) {
+      if (e.source !== job.source) continue;
+      if (job.source === 'google') {
+        // Old rows may still hold the pre-migration literal 'google' or
+        // bare `google:<calId>` — both forms predate CalendarId's current
+        // type, hence the cast to read them here.
+        const legacyId = e.calendarId as string | undefined;
+        const rawId =
+          legacyId === 'google' || !legacyId
+            ? 'primary'
+            : legacyId.startsWith('google:')
+              ? legacyId.slice('google:'.length)
+              : null;
+        if (rawId !== null) updateEvent(e.id, { calendarId: `google:${job.accountId}:${rawId}` });
+      } else {
+        updateEvent(e.id, { calendarId: `apple:${job.accountId}` as const });
+      }
+    }
+  }
+  useSettingsStore.setState({ pendingCalendarIdBackfill: [] });
+}
+
 // ---------------------------------------------------------------------------
 // Bootstrap — call once from App.tsx, after initAuth() resolves and only
 // once a household is actually signed in. Every table's RLS policy requires
@@ -1263,6 +1350,7 @@ export async function hydrateAllStores(): Promise<void> {
     useSuggestionsStore.getState().hydrate(),
     useAppLockStore.getState().hydrate(),
   ]);
+  await runCalendarIdBackfillIfPending();
   // These two are deliberately NOT awaited above: the verse fetch is a
   // "nice to have" (VerseWidgetContent already shows a local fallback verse
   // instantly and swaps in the fetched text if/when it arrives) and
@@ -1301,49 +1389,46 @@ type SettingsState = {
   hiddenPersonIds: string[];
   togglePersonVisibility: (personId: string) => void;
 
-  /** Google calendar ids (not the `google:` prefixed CalendarId — the raw
-   * calendarList id) currently hidden from view, independent of the master
-   * Google on/off switch. Lets you show Personal but hide Work, say. */
+  /** `${googleAccountId}:${googleCalId}` composite keys currently hidden
+   * from view, independent of each account's own on/off switch. Lets you
+   * show Personal but hide Work, say — and, with multiple accounts, hide
+   * "Work" on one without touching another account's same-named calendar. */
   hiddenGoogleCalendarIds: string[];
-  toggleGoogleCalendarVisibility: (googleCalId: string) => void;
+  toggleGoogleCalendarVisibility: (compositeCalId: string) => void;
 
-  /** User-chosen event color per Google calendar id, overriding whatever
-   * color Google itself reports for that calendar. Kept separate from
-   * `google.calendars` (which is overwritten wholesale on every sync) so a
-   * customization survives re-fetching the calendar list. */
+  /** User-chosen event color per `${googleAccountId}:${googleCalId}`
+   * composite key, overriding whatever color Google itself reports for that
+   * calendar. Kept separate from each account's `calendars` (overwritten
+   * wholesale on every sync) so a customization survives re-fetching the
+   * calendar list. */
   googleCalendarColors: Record<string, string>;
-  setGoogleCalendarColor: (googleCalId: string, color: string) => void;
-  resetGoogleCalendarColor: (googleCalId: string) => void;
+  setGoogleCalendarColor: (compositeCalId: string, color: string) => void;
+  resetGoogleCalendarColor: (compositeCalId: string) => void;
 
   notifications: { chores: boolean; events: boolean; daily: boolean };
   setNotification: (key: 'chores' | 'events' | 'daily', value: boolean) => void;
 
-  // Google OAuth state. The `refreshToken` is what makes offline 2-way sync
-  // possible — it lets the app mint a new short-lived `accessToken` (valid
-  // until `expiresAt`, epoch ms) without another interactive sign-in. It's
-  // persisted here in AsyncStorage alongside the other device-local settings;
-  // that's consistent with this app's existing posture (no per-user login,
-  // anon Supabase key in the bundle — see README security note), though
-  // moving it to expo-secure-store would be a reasonable hardening step.
-  google: {
-    connected: boolean;
-    /** When false, Google events are hidden and no local change is pushed to
-     * Google. Undefined counts as on. */
-    enabled?: boolean;
-    email?: string;
-    refreshToken?: string;
-    accessToken?: string;
-    expiresAt?: number;
-    /** The account's calendars (from calendarList), refreshed on connect /
-     * Sync Now. Drives the "which Google calendar" picker in the event form. */
-    calendars?: GoogleCalendarSummary[];
-  };
-  setGoogleAuth: (patch: Partial<SettingsState['google']>) => void;
-  disconnectGoogle: () => void;
+  // Google OAuth state, one entry per connected account. The `refreshToken`
+  // is what makes offline 2-way sync possible — it lets the app mint a new
+  // short-lived `accessToken` (valid until `expiresAt`, epoch ms) without
+  // another interactive sign-in. It's persisted here in AsyncStorage
+  // alongside the other device-local settings; that's consistent with this
+  // app's existing posture (no per-user login, anon Supabase key in the
+  // bundle — see README security note), though moving it to
+  // expo-secure-store would be a reasonable hardening step.
+  googleAccounts: GoogleAccount[];
+  /** Appends a newly-connected account (generates its id) and returns it.
+   * Reconnecting an already-listed account (same email) is the caller's
+   * job — look it up in `googleAccounts` and call `updateGoogleAccount`
+   * instead of appending a duplicate; see SettingsScreen's connect flow. */
+  addGoogleAccount: (account: Omit<GoogleAccount, 'id'>) => GoogleAccount;
+  updateGoogleAccount: (id: string, patch: Partial<Omit<GoogleAccount, 'id'>>) => void;
+  removeGoogleAccount: (id: string) => void;
 
-  apple: { connected: boolean; enabled?: boolean; appleId?: string };
-  setAppleConnection: (connected: boolean, appleId?: string) => void;
-  setAppleEnabled: (enabled: boolean) => void;
+  appleAccounts: AppleAccount[];
+  addAppleAccount: (account: Omit<AppleAccount, 'id'>) => AppleAccount;
+  updateAppleAccount: (id: string, patch: Partial<Omit<AppleAccount, 'id'>>) => void;
+  removeAppleAccount: (id: string) => void;
 
   // Public calendars followed by ICS/webcal URL — view-only, device-local
   // (their *events* are shared via the calendar_events table like everything
@@ -1357,6 +1442,14 @@ type SettingsState = {
 
   ambient: AmbientSettings;
   setAmbient: (patch: Partial<AmbientSettings>) => void;
+
+  /** Set once, by the v1 persisted-settings migration, when there was a
+   * single legacy `google`/`apple` connection to carry over — tells
+   * hydrateAllStores() which existing calendar_events rows need their
+   * `calendarId` rewritten from the old unaccounted scheme to the new
+   * `google:<accountId>:<calId>` / `apple:<accountId>` one. Cleared to `[]`
+   * once that one-time backfill runs; a no-op on every other install. */
+  pendingCalendarIdBackfill: { source: 'google' | 'apple'; accountId: string }[];
 };
 
 export const useSettingsStore = create<SettingsState>()(
@@ -1404,14 +1497,27 @@ export const useSettingsStore = create<SettingsState>()(
       setNotification: (key, value) =>
         set((s) => ({ notifications: { ...s.notifications, [key]: value } })),
 
-      google: { connected: false },
-      setGoogleAuth: (patch) => set((s) => ({ google: { ...s.google, ...patch } })),
-      disconnectGoogle: () => set({ google: { connected: false } }),
+      googleAccounts: [],
+      addGoogleAccount: (account) => {
+        const next: GoogleAccount = { ...account, id: makeId() };
+        set((s) => ({ googleAccounts: [...s.googleAccounts, next] }));
+        return next;
+      },
+      updateGoogleAccount: (id, patch) =>
+        set((s) => ({ googleAccounts: s.googleAccounts.map((a) => (a.id === id ? { ...a, ...patch } : a)) })),
+      removeGoogleAccount: (id) =>
+        set((s) => ({ googleAccounts: s.googleAccounts.filter((a) => a.id !== id) })),
 
-      apple: { connected: false },
-      setAppleConnection: (connected, appleId) =>
-        set((s) => ({ apple: { ...s.apple, connected, appleId } })),
-      setAppleEnabled: (enabled) => set((s) => ({ apple: { ...s.apple, enabled } })),
+      appleAccounts: [],
+      addAppleAccount: (account) => {
+        const next: AppleAccount = { ...account, id: makeId() };
+        set((s) => ({ appleAccounts: [...s.appleAccounts, next] }));
+        return next;
+      },
+      updateAppleAccount: (id, patch) =>
+        set((s) => ({ appleAccounts: s.appleAccounts.map((a) => (a.id === id ? { ...a, ...patch } : a)) })),
+      removeAppleAccount: (id) =>
+        set((s) => ({ appleAccounts: s.appleAccounts.filter((a) => a.id !== id) })),
 
       subscribedCalendars: [],
       addSubscribedCalendar: (c) => {
@@ -1445,8 +1551,53 @@ export const useSettingsStore = create<SettingsState>()(
         brightness: 1,
       },
       setAmbient: (patch) => set((s) => ({ ambient: { ...s.ambient, ...patch } })),
+
+      pendingCalendarIdBackfill: [],
     }),
-    { name: 'roost.settings', storage },
+    {
+      name: 'roost.settings',
+      storage,
+      version: 1,
+      // v0 -> v1: `google`/`apple` were single objects (one account each) —
+      // now they're arrays. Wrap whatever was connected into a one-item
+      // array so an existing connection survives the upgrade instead of
+      // silently vanishing; nothing connected just becomes `[]`. The
+      // matching calendar_events rows' `calendarId` strings can't be fixed
+      // up here (this runs synchronously, before useCalendarStore even
+      // exists) — that's queued in `pendingCalendarIdBackfill` and finished
+      // by runCalendarIdBackfillIfPending() from hydrateAllStores() below.
+      migrate: (persisted: any, fromVersion: number) => {
+        if (fromVersion >= 1) return persisted;
+        const next = { ...persisted };
+        const g = persisted?.google;
+        const a = persisted?.apple;
+        const googleAccounts: GoogleAccount[] = g?.connected
+          ? [
+              {
+                id: makeId(),
+                email: g.email ?? '',
+                enabled: g.enabled !== false,
+                refreshToken: g.refreshToken,
+                accessToken: g.accessToken,
+                expiresAt: g.expiresAt,
+                calendars: g.calendars,
+              },
+            ]
+          : [];
+        const appleAccounts: AppleAccount[] = a?.connected
+          ? [{ id: makeId(), appleId: a.appleId ?? '', enabled: a.enabled !== false }]
+          : [];
+        next.googleAccounts = googleAccounts;
+        next.appleAccounts = appleAccounts;
+        next.pendingCalendarIdBackfill = [
+          ...(googleAccounts.length ? [{ source: 'google' as const, accountId: googleAccounts[0].id }] : []),
+          ...(appleAccounts.length ? [{ source: 'apple' as const, accountId: appleAccounts[0].id }] : []),
+        ];
+        delete next.google;
+        delete next.apple;
+        return next;
+      },
+    },
   ),
 );
 

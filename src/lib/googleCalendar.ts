@@ -30,7 +30,7 @@ import { AuthRequest, ResponseType } from 'expo-auth-session';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { CalendarEvent, GoogleCalendarSummary } from '../store/types';
-import { useSettingsStore } from '../store/useAppStore';
+import { useCalendarStore, useProviderSyncStatusStore, useSettingsStore } from '../store/useAppStore';
 import { parseClockTime } from './date';
 
 // calendar.events covers reading/writing *events*; listing the account's own
@@ -314,24 +314,40 @@ export async function refreshGoogleAccessToken(refreshToken: string): Promise<Go
   return callTokenProxy({ action: 'refresh', refreshToken });
 }
 
-/** Returns a usable access token for the Calendar API, refreshing (and
- * persisting the result) if the stored one is missing or within 60s of
- * expiry. Throws if Google was never connected. */
-export async function getFreshGoogleAccessToken(): Promise<string> {
-  const { google, setGoogleAuth } = useSettingsStore.getState();
-  if (google.accessToken && google.expiresAt && google.expiresAt - Date.now() > 60_000) {
-    return google.accessToken;
+/** Returns a usable access token for one connected account's Calendar API
+ * calls, refreshing (and persisting the result) if the stored one is
+ * missing or within 60s of expiry. Throws if that account isn't found or
+ * was never actually connected. */
+export async function getFreshGoogleAccessToken(accountId: string): Promise<string> {
+  const { googleAccounts, updateGoogleAccount } = useSettingsStore.getState();
+  const account = googleAccounts.find((a) => a.id === accountId);
+  if (!account) throw new Error('That Google account is no longer connected.');
+  if (account.accessToken && account.expiresAt && account.expiresAt - Date.now() > 60_000) {
+    return account.accessToken;
   }
-  if (!google.refreshToken) {
+  if (!account.refreshToken) {
     throw new Error('Google Calendar is not connected — sign in from Settings first.');
   }
-  const t = await refreshGoogleAccessToken(google.refreshToken);
-  setGoogleAuth({
+  const t = await refreshGoogleAccessToken(account.refreshToken);
+  updateGoogleAccount(accountId, {
     accessToken: t.accessToken,
     expiresAt: t.expiresAt,
     ...(t.refreshToken ? { refreshToken: t.refreshToken } : {}),
   });
   return t.accessToken;
+}
+
+/** The connected account's own email — fetched right after token exchange
+ * so multiple Google accounts can be told apart in the UI (and so a
+ * reconnect can be matched to the right existing row instead of appending a
+ * duplicate). Uses the `email`/`openid` scopes already requested above. */
+export async function fetchGoogleUserEmail(accessToken: string): Promise<string> {
+  const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Could not read the Google account's email: ${res.status} ${await res.text()}`);
+  const json = (await res.json()) as { email?: string };
+  return json.email ?? '';
 }
 
 type GoogleEvent = {
@@ -342,13 +358,18 @@ type GoogleEvent = {
 
 const CAL_BASE = 'https://www.googleapis.com/calendar/v3/calendars';
 
-/** `google:<id>` (or the legacy bare `'google'`) → the Google calendar id.
- * Anything else → null. */
-export function googleCalIdFor(calendarId?: string | null): string | null {
-  if (!calendarId) return null;
-  if (calendarId === 'google') return 'primary';
-  if (calendarId.startsWith('google:')) return calendarId.slice('google:'.length) || 'primary';
-  return null;
+/** `google:<accountId>:<calId>` → which account and which of its calendars.
+ * Anything else (including the pre-multi-account legacy `'google'` /
+ * `google:<calId>` forms — see runCalendarIdBackfillIfPending in
+ * useAppStore.ts, which rewrites any live row to the current form) → null. */
+export function googleCalIdFor(calendarId?: string | null): { accountId: string; calId: string } | null {
+  if (!calendarId || !calendarId.startsWith('google:')) return null;
+  const rest = calendarId.slice('google:'.length);
+  const sep = rest.indexOf(':');
+  if (sep === -1) return null;
+  const accountId = rest.slice(0, sep);
+  const calId = rest.slice(sep + 1) || 'primary';
+  return accountId ? { accountId, calId } : null;
 }
 
 function throwForCalendarStatus(status: number, body: string): never {
@@ -396,11 +417,11 @@ export async function fetchGoogleCalendarList(accessToken: string): Promise<Goog
     }));
 }
 
-function mapGoogleEvent(e: GoogleEvent, calId: string): CalendarEvent {
+function mapGoogleEvent(e: GoogleEvent, accountId: string, calId: string): CalendarEvent {
   const dateTime = e.start?.dateTime ?? e.start?.date ?? new Date().toISOString();
   const d = new Date(dateTime);
   return {
-    id: `google_${calId}_${e.id}`,
+    id: `google_${accountId}_${calId}_${e.id}`,
     googleId: e.id,
     date: e.start?.dateTime
       ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -411,14 +432,16 @@ function mapGoogleEvent(e: GoogleEvent, calId: string): CalendarEvent {
     title: e.summary ?? '(untitled event)',
     personIds: [],
     source: 'google',
-    calendarId: `google:${calId}`,
+    calendarId: `google:${accountId}:${calId}`,
   };
 }
 
 /** Pulls upcoming events from every given calendar (id list, e.g. from
- * fetchGoogleCalendarList). Each event is tagged with its `google:<id>`. */
+ * fetchGoogleCalendarList) of one account. Each event is tagged with its
+ * `google:<accountId>:<calId>`. */
 export async function fetchGoogleEvents(
   accessToken: string,
+  accountId: string,
   calendarIds: string[] = ['primary'],
   daysAhead = 60,
 ): Promise<CalendarEvent[]> {
@@ -442,13 +465,40 @@ export async function fetchGoogleEvents(
         return [] as CalendarEvent[];
       }
       const json = (await res.json()) as { items?: GoogleEvent[] };
-      return (json.items ?? []).map((e) => mapGoogleEvent(e, calId));
+      return (json.items ?? []).map((e) => mapGoogleEvent(e, accountId, calId));
     }),
   );
   const all = perCalendar.flat();
   // eslint-disable-next-line no-console
   console.log(`[google] fetched ${all.length} event(s) across ${calendarIds.length} calendar(s)`);
   return all;
+}
+
+/** Full sync for one connected account — refreshes its calendar list, pulls
+ * events from every calendar in it, and swaps them into the app's calendar.
+ * Shared by Settings' "Sync Now"/Connect and the Calendar screen's "Sync
+ * All", and records per-account status (spinner/last-synced/error) in
+ * useProviderSyncStatusStore so both UIs reflect it without extra plumbing.
+ * Returns how many events were fetched; throws (after recording the error)
+ * on failure so Sync All's Promise.allSettled can tell this account apart
+ * from ones that succeeded. */
+export async function syncGoogleAccount(accountId: string): Promise<number> {
+  useProviderSyncStatusStore.getState().setStatus('google', accountId, { state: 'syncing' });
+  try {
+    const accessToken = await getFreshGoogleAccessToken(accountId);
+    const calendars = await fetchGoogleCalendarList(accessToken);
+    useSettingsStore.getState().updateGoogleAccount(accountId, { calendars });
+    const ids = calendars.length ? calendars.map((c) => c.id) : ['primary'];
+    const events = await fetchGoogleEvents(accessToken, accountId, ids);
+    useCalendarStore.getState().replaceSyncedEvents('google', accountId, events, ids);
+    useProviderSyncStatusStore.getState().setStatus('google', accountId, { state: 'ok', at: new Date().toISOString() });
+    return events.length;
+  } catch (err: any) {
+    useProviderSyncStatusStore
+      .getState()
+      .setStatus('google', accountId, { state: 'error', message: String(err?.message ?? err), at: new Date().toISOString() });
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -544,45 +594,48 @@ export async function moveGoogleEvent(
   if (!res.ok) throw new Error(`Google move failed: ${res.status} ${await res.text()}`);
 }
 
-/** True when events can currently be written to Google (connected, a refresh
- * token on hand, and the toggle in Settings left on). */
-function googleWritable(): boolean {
-  const g = useSettingsStore.getState().google;
-  return !!g.connected && g.enabled !== false && !!g.refreshToken;
+/** True when events can currently be written to that account (connected, a
+ * refresh token on hand, and its toggle in Settings left on). */
+function googleWritable(accountId: string): boolean {
+  const account = useSettingsStore.getState().googleAccounts.find((a) => a.id === accountId);
+  return !!account && account.enabled && !!account.refreshToken;
 }
 
 /** Mirrors a newly-created event to the Google calendar named by `calendarId`
- * (`google:<id>`); returns its Google id, or null if Google isn't
- * connected/enabled or `calendarId` isn't a Google one. */
+ * (`google:<accountId>:<calId>`); returns its Google id, or null if that
+ * account isn't connected/enabled or `calendarId` isn't a Google one. */
 export async function mirrorNewEventToGoogle(
   event: CalendarEvent,
   calendarId: string | null | undefined,
 ): Promise<string | null> {
-  const calId = googleCalIdFor(calendarId);
-  if (!calId || !googleWritable()) return null;
-  return createGoogleEvent(await getFreshGoogleAccessToken(), calId, event);
+  const parsed = googleCalIdFor(calendarId);
+  if (!parsed || !googleWritable(parsed.accountId)) return null;
+  return createGoogleEvent(await getFreshGoogleAccessToken(parsed.accountId), parsed.calId, event);
 }
 
 /** Pushes an edit to the event's mirrored Google copy on its own calendar
- * (no-op if it has no googleId / isn't a Google event / Google is off). */
+ * (no-op if it has no googleId / isn't a Google event / that account is
+ * off). */
 export async function pushEventEditToGoogle(event: CalendarEvent): Promise<void> {
-  const calId = googleCalIdFor(event.calendarId);
-  if (!event.googleId || !calId || !googleWritable()) return;
-  await patchGoogleEvent(await getFreshGoogleAccessToken(), calId, event.googleId, event);
+  const parsed = googleCalIdFor(event.calendarId);
+  if (!event.googleId || !parsed || !googleWritable(parsed.accountId)) return;
+  await patchGoogleEvent(await getFreshGoogleAccessToken(parsed.accountId), parsed.calId, event.googleId, event);
 }
 
-/** Deletes the event's mirrored Google copy from `calendarId` (no-op if
- * Google is off). */
+/** Deletes the event's mirrored Google copy from `calendarId` (no-op if that
+ * account is off). */
 export async function deleteEventFromGoogle(
   calendarId: string | null | undefined,
   googleId: string,
 ): Promise<void> {
-  const calId = googleCalIdFor(calendarId);
-  if (!calId || !googleWritable()) return;
-  await deleteGoogleEvent(await getFreshGoogleAccessToken(), calId, googleId);
+  const parsed = googleCalIdFor(calendarId);
+  if (!parsed || !googleWritable(parsed.accountId)) return;
+  await deleteGoogleEvent(await getFreshGoogleAccessToken(parsed.accountId), parsed.calId, googleId);
 }
 
-/** Moves an already-mirrored event from one Google calendar to another. */
+/** Moves an already-mirrored event from one Google calendar to another —
+ * only within the same account; Google's `move` endpoint has no notion of
+ * moving an event to a different account. */
 export async function moveEventBetweenGoogleCalendars(
   fromCalendarId: string | null | undefined,
   toCalendarId: string | null | undefined,
@@ -590,7 +643,9 @@ export async function moveEventBetweenGoogleCalendars(
 ): Promise<boolean> {
   const from = googleCalIdFor(fromCalendarId);
   const to = googleCalIdFor(toCalendarId);
-  if (!from || !to || from === to || !googleWritable()) return false;
-  await moveGoogleEvent(await getFreshGoogleAccessToken(), from, to, googleId);
+  if (!from || !to || from.accountId !== to.accountId || from.calId === to.calId || !googleWritable(from.accountId)) {
+    return false;
+  }
+  await moveGoogleEvent(await getFreshGoogleAccessToken(from.accountId), from.calId, to.calId, googleId);
   return true;
 }
