@@ -114,7 +114,7 @@ function HeroSection({
           For the whole family
         </Text>
         <Text style={{ fontFamily: theme.fonts.head, fontSize: narrow ? 36 : 48, color: theme.colors.ink, lineHeight: narrow ? 42 : 52, marginBottom: 20 }}>
-          Your family daily huddle, gracefully simplified.
+          Your daily huddle, gracefully simplified.
         </Text>
         <Text style={{ fontFamily: theme.fonts.body, fontSize: 16, color: theme.colors.inkSoft, lineHeight: 25, marginBottom: 28, maxWidth: 460 }}>
           One warm, shared home screen for your family's calendar, chores, meals and to-dos — on the kitchen
@@ -504,7 +504,7 @@ function Footer() {
         <View>
           <Text style={{ fontFamily: theme.fonts.headSemiBold, fontSize: 15, color: theme.colors.ink }}>Huddle</Text>
           <Text style={{ fontFamily: theme.fonts.body, fontSize: 11.5, color: theme.colors.inkSoft }}>
-            Your family daily huddle, gracefully simplified.
+            Your daily huddle, gracefully simplified.
           </Text>
         </View>
       </View>
