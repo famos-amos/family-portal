@@ -49,7 +49,7 @@
     "android": "expo start --android -c",
     "ios": "expo start --ios -c",
     "web": "expo start --web -c",
-    "export:web": "expo export --platform web --clear"
+    "export:web": "expo export --platform web --clear --output-dir build"
   },
   "private": true
 }
