@@ -45,7 +45,8 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
-    "start": "expo start -c",
+    "start": "expo export --platform web --clear --output-dir build",
+    "dev": "expo start -c",
     "android": "expo start --android -c",
     "ios": "expo start --ios -c",
     "web": "expo start --web -c",

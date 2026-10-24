@@ -454,10 +454,16 @@ supabase/
 ## Scripts
 
 ```bash
-npm run start        # expo start -c   (clears the Metro cache on launch)
+npm run dev          # expo start -c   (local dev server, clears the Metro cache on launch)
 npm run android      # expo start --android -c
 npm run ios          # expo start --ios -c
 npm run web          # expo start --web -c
-npm run export:web   # expo export --platform web --clear  (static web build)
+npm run start        # expo export --platform web --clear --output-dir build (static web build —
+                      # this is what host platforms that always run "npm start" will invoke)
+npm run export:web   # same as "start", kept as an explicit alias
 npx tsc --noEmit     # typecheck
 ```
+
+Note: `start` is a static build, not a dev server — most hosts (Hostinger included) always
+run `npm start` for their build step with no way to point it elsewhere, so that's what lives
+there. Use `npm run dev` for local development instead.
