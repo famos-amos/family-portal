@@ -41,6 +41,10 @@ jobs:
         env:
           EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+          # This site is served from a /family-portal subpath here, but at
+          # the domain root on Hostinger — see app.config.js for why this
+          # can't just be a fixed value in app.json.
+          PAGES_BASE_PATH: /family-portal
 
       # GitHub Pages ignores files/folders starting with an underscore by
       # default (its Jekyll processing step) — Expo's web output puts the
